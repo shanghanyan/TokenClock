@@ -206,14 +206,21 @@ function Badge({ color, bg, border, label, title }) {
 
 function DynatraceBadge({ dt }) {
   if (!dt) return null;
-  const map = {
-    healthy: { color: C.emerald, bg: C.okBg, border: "#0C3018", label: "Dynatrace: Healthy" },
-    needs_access: { color: C.amber, bg: "#1C1500", border: "#2A2000", label: "Dynatrace: Needs access" },
-    not_configured: { color: C.mutedMid, bg: "#0A1018", border: C.border, label: "Dynatrace: Not configured" },
-    error: { color: C.red, bg: C.errBg, border: "#320A14", label: "Dynatrace: Error" },
-  };
-  const s = map[dt.status] || map.error;
-  return <Badge {...s} title={dt.message || ""} />;
+  let s;
+  if (dt.status === "healthy") {
+    s = dt.exporting
+      ? { color: C.emerald, bg: C.okBg, border: "#0C3018", label: "Dynatrace: Exporting" }
+      : { color: C.emerald, bg: C.okBg, border: "#0C3018", label: "Dynatrace: Ready (export off)" };
+  } else {
+    s = {
+      needs_access: { color: C.amber, bg: "#1C1500", border: "#2A2000", label: "Dynatrace: Needs access" },
+      not_configured: { color: C.mutedMid, bg: "#0A1018", border: C.border, label: "Dynatrace: Not configured" },
+      error: { color: C.red, bg: C.errBg, border: "#320A14", label: "Dynatrace: Error" },
+    }[dt.status] || { color: C.red, bg: C.errBg, border: "#320A14", label: "Dynatrace: Error" };
+  }
+  const title = [dt.message, dt.export_enabled ? "Export: enabled" : "Export: disabled"]
+    .filter(Boolean).join(" · ");
+  return <Badge {...s} title={title} />;
 }
 
 function GoogleBadge({ g }) {

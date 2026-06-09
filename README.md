@@ -35,10 +35,11 @@ covers the LLM.
 Prerequisites: Python 3.8+, Node 18+, and a Google AI Studio key in `.env`.
 
 ```bash
-# 1. Backend dependencies
+# 1. Backend dependencies + config
 cd prompt-latency-tracer
 python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
+cp .env.example .env                                # then set GOOGLE_API_KEY in .env
 
 # 2. Build the dashboard (one-time; also after any frontend change)
 cd ../dashboard && npm install && npm run build
@@ -90,11 +91,17 @@ enabling billing.
 2. In `.env`: set `DYNATRACE_ENABLED=1`, paste the token into
    `DYNATRACE_API_TOKEN`, keep `DYNATRACE_AUTH_SCHEME=Api-Token`, set
    `DYNATRACE_ENDPOINT`.
-3. `python server.py` (or `main.py`) → spans go to both the local file and Dynatrace.
+3. `python server.py` (or `main.py`) → spans go to both the local file and
+   Dynatrace. The dashboard's Dynatrace badge flips to **Exporting** and the
+   dashboard keeps reading the local file, so it shows the full run history
+   whether or not export is on.
 
 ### Path 2 — diagnostics (works with the token we already have)
-`python check_dynatrace.py` uses the token's `apiTokens.write` capability to look
-up its own scopes and report whether ingest is possible and what's missing.
+`python check_dynatrace.py` (also powering the dashboard badge) reports whether
+ingest will work and what's missing. It first introspects the token via
+`apiTokens/lookup`; if the token can't introspect itself (e.g. an admin token
+scoped *only* for ingest, or a platform token), it falls back to probing the OTLP
+ingest endpoint directly — so a valid admin key reads **healthy** either way.
 
 ## Dashboard & rebuilding
 
@@ -123,3 +130,80 @@ prompt-latency-tracer/
   check_dynatrace.py # Dynatrace token readiness check (CLI + API)
 dashboard/           # React + Recharts web UI
 ```
+
+## In-depth summary
+
+This section explains the whole project end to end so it can be understood
+without reading the code.
+
+### What problem it solves
+When you send a prompt to an LLM, "it felt slow" isn't actionable. This tool
+breaks each request into measurable stages and records exactly where the time and
+tokens go, then makes that history browsable. It's a small, self-contained
+example of **observability for LLM calls** using OpenTelemetry — the same tracing
+standard used in production systems — without needing a paid backend to be useful.
+
+### The three-stage pipeline
+Every prompt is executed as one **trace** made of nested **spans** (timed
+operations). The root span `llm.full_pipeline` wraps three children:
+
+1. **`llm.prompt_preparation`** — building the request before the network call
+   (negligible time, included for completeness).
+2. **`llm.inference`** — the actual Gemini API call. This dominates latency and
+   is where token counts (prompt / completion / total) are recorded.
+3. **`llm.post_processing`** — handling the response after it returns.
+
+Each span carries attributes (model name, prompt text, durations, token counts,
+success flag) and, on failure, an `exception` event with the error message. This
+parent/child structure is what lets the UI draw a per-run "waterfall."
+
+### How data flows
+```
+prompt → llm_client (creates spans) → tracer (OTel provider)
+                                         ├─ always → traces/spans.jsonl  (one JSON span per line)
+                                         ├─ optional → console            (OTEL_CONSOLE=1)
+                                         └─ optional → Dynatrace OTLP      (DYNATRACE_ENABLED=1 + valid token)
+spans.jsonl → server.py (parses lines into runs) → /api/* → dashboard
+spans.jsonl → report.py (CLI aggregate)
+```
+The local JSONL file is the **single source of truth**. Every other view (web
+dashboard, CLI report, and even Dynatrace when enabled) is built from the same
+spans, so they never disagree.
+
+### Components
+- **`llm_client.py`** — wraps the Gemini call in the three spans and returns a
+  latency/token breakdown. Handles real-world API failure: exponential-backoff
+  retries on transient `503`s, and automatic rotation to a second API key on
+  `429` quota errors.
+- **`tracer.py`** — configures the OpenTelemetry provider and decides where spans
+  go. The local-file exporter is always on; console and Dynatrace are opt-in. The
+  Dynatrace path is fully wired and flag-gated, so it activates with no code
+  changes once a valid token exists.
+- **`usage.py`** — persists per-key Google request counts to `usage.json` so the
+  app can warn when a key is near its free-tier daily limit and mark keys as
+  exhausted.
+- **`server.py`** — a small Flask app that serves the built dashboard and exposes
+  `/api/traces` (parsed run history), `/api/health` (Dynatrace + Google status),
+  and `/api/run` (trigger a built-in or custom prompt). A lock prevents
+  overlapping runs.
+- **`check_dynatrace.py`** — answers "would trace ingest actually work?" It
+  introspects the token's scopes, and if that's not possible, probes the ingest
+  endpoint directly. Used by both the CLI and the dashboard's health badge.
+- **`dashboard/`** — a React + Recharts single page: run controls, a sortable
+  runs table with expandable per-run detail, a latency-over-time line chart, a
+  token bar chart, and live Dynatrace/Google badges. It polls the API for live
+  updates and falls back to bundled sample data when no backend is reachable.
+
+### Key design decisions
+- **Local-first, not Dynatrace-first.** Dynatrace trace ingest requires an admin
+  -created token scope we can't grant on the available credentials, so the
+  primary backend is a local file. This keeps the project fully runnable today
+  while leaving Dynatrace as a one-flag upgrade.
+- **Resilient by default.** Free-tier LLM APIs fail often; retries, key rotation,
+  and per-run error capture mean one bad call never aborts a session, and
+  quota-failed runs are visibly separated from genuine performance data.
+- **One source of truth.** Centralizing on `spans.jsonl` keeps the CLI, web UI,
+  and Dynatrace consistent and makes the data trivial to inspect or replay.
+- **Honest health signals.** The dashboard reports the real state of external
+  dependencies (Dynatrace readiness, Google quota) instead of hiding them, so
+  it's clear when results are limited by infrastructure rather than the code.

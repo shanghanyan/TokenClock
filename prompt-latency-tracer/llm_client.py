@@ -112,11 +112,11 @@ def run_traced_prompt(tracer, prompt: str) -> dict:
                 )
                 duration = round((time.time() - start) * 1000, 2)
 
-                usage = response.usage_metadata
+                meta = response.usage_metadata
                 infer_span.set_attribute("inference.duration_ms", duration)
-                infer_span.set_attribute("tokens.prompt", usage.prompt_token_count)
-                infer_span.set_attribute("tokens.completion", usage.candidates_token_count)
-                infer_span.set_attribute("tokens.total", usage.total_token_count)
+                infer_span.set_attribute("tokens.prompt", meta.prompt_token_count)
+                infer_span.set_attribute("tokens.completion", meta.candidates_token_count)
+                infer_span.set_attribute("tokens.total", meta.total_token_count)
                 infer_span.set_attribute("model.finish_reason", str(response.candidates[0].finish_reason))
                 infer_span.set_status(Status(StatusCode.OK))
 

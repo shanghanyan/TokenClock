@@ -11,6 +11,7 @@ Usage:
 """
 import json
 import os
+import re
 import ssl
 import urllib.error
 import urllib.request
@@ -35,17 +36,23 @@ def _api_base(endpoint: str) -> str:
     return endpoint[: i + len(marker)] if i >= 0 else endpoint.rstrip("/")
 
 
-def _post(url: str, token: str, body: dict) -> tuple[int, dict | str]:
-    data = json.dumps(body).encode()
-    req = urllib.request.Request(
-        url,
-        data=data,
-        method="POST",
-        headers={"Authorization": f"Api-Token {token}", "Content-Type": "application/json"},
-    )
+def _traces_url(endpoint: str) -> str:
+    endpoint = endpoint.rstrip("/")
+    return endpoint if endpoint.endswith("/v1/traces") else f"{endpoint}/v1/traces"
+
+
+def _auth_header(token: str) -> dict:
+    scheme = os.getenv("DYNATRACE_AUTH_SCHEME", "Api-Token")
+    prefix = "Bearer" if scheme.lower() == "bearer" else "Api-Token"
+    return {"Authorization": f"{prefix} {token}"}
+
+
+def _request(url, headers, data, method="POST") -> tuple[int, object]:
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=15, context=_SSL_CTX) as resp:
-            return resp.status, json.loads(resp.read().decode() or "{}")
+            raw = resp.read().decode()
+            return resp.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as e:
         raw = e.read().decode()
         try:
@@ -54,6 +61,39 @@ def _post(url: str, token: str, body: dict) -> tuple[int, dict | str]:
             return e.code, raw
     except urllib.error.URLError as e:
         return 0, str(e)
+
+
+def _post(url: str, token: str, body: dict) -> tuple[int, object]:
+    headers = {"Authorization": f"Api-Token {token}", "Content-Type": "application/json"}
+    return _request(url, headers, json.dumps(body).encode())
+
+
+def _probe_ingest(endpoint: str, token: str) -> dict:
+    """
+    Fallback when token introspection isn't possible (e.g. an ingest-only token
+    without apiTokens.read). Sends an empty body to the OTLP traces endpoint:
+    auth/scope are evaluated before the payload, so the status code tells us
+    whether ingest would work.
+    """
+    headers = {**_auth_header(token), "Content-Type": "application/x-protobuf"}
+    status, body = _request(_traces_url(endpoint), headers, b"")
+    raw = body if isinstance(body, str) else json.dumps(body)
+    # OTLP error bodies are protobuf-framed; pull out the human-readable text.
+    printable = "".join(c for c in raw if c.isprintable())
+    m = re.search(r"[A-Z][a-z].*", printable)
+    text = (m.group(0) if m else printable).strip()[:200]
+    if status in (200, 204, 400):  # 400 = authenticated+scoped, just an empty/invalid payload
+        return {"status": "healthy", "healthy": True,
+                "message": "Ready — token accepted by the OTLP ingest endpoint."}
+    if status == 401:
+        return {"status": "error", "healthy": False,
+                "message": "Token authentication failed (invalid/expired)."}
+    if status == 403:
+        return {"status": "needs_access", "healthy": False,
+                "message": f"Missing ingest scope. {text}"}
+    if status == 0:
+        return {"status": "error", "healthy": False, "message": f"Network error: {text}"}
+    return {"status": "error", "healthy": False, "message": f"HTTP {status}: {text}"}
 
 
 def check_readiness() -> dict:
@@ -65,16 +105,23 @@ def check_readiness() -> dict:
     """
     endpoint = os.getenv("DYNATRACE_ENDPOINT", "")
     token = os.getenv("DYNATRACE_API_TOKEN", "")
+    export_enabled = os.getenv("DYNATRACE_ENABLED") == "1"
+
+    def finish(result: dict) -> dict:
+        result["export_enabled"] = export_enabled
+        result["exporting"] = bool(export_enabled and result.get("healthy"))
+        return result
 
     if not endpoint or not token:
-        return {
+        return finish({
             "status": "not_configured",
             "healthy": False,
             "message": "Set DYNATRACE_ENDPOINT and DYNATRACE_API_TOKEN in .env",
-        }
+        })
 
+    # Step 1: introspect the token (works for tokens with apiTokens.read/write,
+    # e.g. the personal token). Gives rich scope detail when available.
     status, body = _post(f"{_api_base(endpoint)}/apiTokens/lookup", token, {"token": token})
-
     if status == 200 and isinstance(body, dict):
         scopes = body.get("scopes", [])
         personal = body.get("personalAccessToken", False)
@@ -86,7 +133,7 @@ def check_readiness() -> dict:
                        "Add an admin-created regular API token.")
         else:
             message = f"Missing scope '{INGEST_SCOPE}'. Add it via an admin."
-        return {
+        return finish({
             "status": "healthy" if can_ingest else "needs_access",
             "healthy": can_ingest,
             "token": body.get("name"),
@@ -94,16 +141,11 @@ def check_readiness() -> dict:
             "personal": personal,
             "scopes": scopes,
             "message": message,
-        }
-    if status == 401:
-        return {"status": "error", "healthy": False,
-                "message": "Token authentication failed (invalid/expired)."}
-    if status == 403:
-        return {"status": "error", "healthy": False,
-                "message": "Token lacks apiTokens.read/write; cannot introspect."}
-    if status == 0:
-        return {"status": "error", "healthy": False, "message": f"Network error: {body}"}
-    return {"status": "error", "healthy": False, "message": f"HTTP {status}: {body}"}
+        })
+
+    # Step 2: introspection unavailable (e.g. an admin ingest-only token without
+    # apiTokens.read, or a platform token). Probe the ingest endpoint directly.
+    return finish(_probe_ingest(endpoint, token))
 
 
 def main():
@@ -117,6 +159,8 @@ def main():
         print(f"type     : {'personal access token' if r.get('personal') else 'API token'}")
         print(f"scopes   : {', '.join(r.get('scopes') or []) or '(none)'}")
     print(f"ingest   : {'READY' if r['healthy'] else 'NOT READY'}")
+    print(f"export   : {'ENABLED' if r.get('export_enabled') else 'disabled'}"
+          f"{' — actively exporting' if r.get('exporting') else ''}")
     print(f"detail   : {r['message']}")
 
 
