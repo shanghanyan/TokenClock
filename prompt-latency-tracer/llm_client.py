@@ -8,23 +8,72 @@ from dotenv import load_dotenv
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
-load_dotenv()
-client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+import usage
 
-# Gemini's free tier intermittently returns 503 UNAVAILABLE / 429. Retry those
-# a few times with exponential backoff so a transient blip doesn't kill the run.
-_RETRYABLE = {429, 500, 502, 503, 504}
+load_dotenv()
+
+
+def _load_keys():
+    """
+    Collect Google API keys in priority order. Supports a comma-separated
+    GOOGLE_API_KEY and an optional GOOGLE_API_KEY_2 fallback. When the active
+    key hits its daily quota (429), we rotate to the next key automatically.
+    """
+    keys = []
+    for raw in (os.getenv("GOOGLE_API_KEY", ""), os.getenv("GOOGLE_API_KEY_2", "")):
+        for k in raw.split(","):
+            k = k.strip()
+            if k and k not in keys:
+                keys.append(k)
+    return keys
+
+
+_KEYS = _load_keys()
+_key_idx = 0
+_clients = {}
+
+# Transient errors are retried on the same key; quota (429) rotates keys first.
+_TRANSIENT = {500, 502, 503, 504}
+_QUOTA = 429
 _MAX_RETRIES = 4
+
+
+def _client():
+    if not _KEYS:
+        raise RuntimeError("No Google API key set. Add GOOGLE_API_KEY to .env")
+    key = _KEYS[_key_idx]
+    if key not in _clients:
+        _clients[key] = genai.Client(api_key=key)
+    return _clients[key]
+
+
+def _rotate_key():
+    """Advance to the next available key. Returns True if one was available."""
+    global _key_idx
+    if _key_idx + 1 < len(_KEYS):
+        _key_idx += 1
+        print(f"  [key] quota hit — switching to Google API key #{_key_idx + 1}/{len(_KEYS)}")
+        return True
+    return False
 
 
 def _generate_with_retry(**kwargs):
     delay = 1.0
-    for attempt in range(1, _MAX_RETRIES + 1):
+    attempt = 0
+    while True:
+        attempt += 1
+        key = _KEYS[_key_idx]
         try:
-            return client.models.generate_content(**kwargs)
+            usage.record_request(key)
+            return _client().models.generate_content(**kwargs)
         except genai_errors.APIError as e:
             code = getattr(e, "code", None)
-            if code in _RETRYABLE and attempt < _MAX_RETRIES:
+            if code == _QUOTA:
+                usage.mark_exhausted(key)
+                if _rotate_key():
+                    delay, attempt = 1.0, 0  # fresh budget on the new key
+                    continue
+            if code in (_TRANSIENT | {_QUOTA}) and attempt < _MAX_RETRIES:
                 print(f"  [retry] model {code}, attempt {attempt}/{_MAX_RETRIES - 1}; "
                       f"waiting {delay:.0f}s...")
                 time.sleep(delay)

@@ -3,3 +3,4 @@ opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
 opentelemetry-semantic-conventions
 python-dotenv
+flask

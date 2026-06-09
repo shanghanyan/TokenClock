@@ -1,0 +1,25 @@
+# Secrets — never commit real credentials
+Ava wants token
+.env
+.env.*
+!.env.example
+*.key
+*credentials*
+
+# Python
+__pycache__/
+*.pyc
+.Python
+venv/
+
+# Node / frontend build
+node_modules/
+dist/
+.vite/
+
+# Local trace output / usage
+traces/
+usage.json
+
+# OS
+.DS_Store
