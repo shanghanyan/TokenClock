@@ -1,4 +1,4 @@
-openai
+google-genai
 opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
 opentelemetry-semantic-conventions

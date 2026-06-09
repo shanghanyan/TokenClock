@@ -18,25 +18,58 @@ def run_prompt(tracer, prompt: str):
     print(f"Prompt: {prompt[:80]}{'...' if len(prompt) > 80 else ''}")
     print(f"{'─' * 60}")
 
-    result = run_traced_prompt(tracer, prompt)
+    try:
+        result = run_traced_prompt(tracer, prompt)
+    except Exception as e:
+        print(f"Error       : {e}")
+        return None
 
+    lat = result["latency"]
     print(f"Tokens used : {result['tokens']}")
+    print(f"Latency     : {lat['total_ms']} ms "
+          f"(prep {lat['prep_ms']} / inference {lat['inference_ms']} / post {lat['post_ms']})")
     print(f"Response    : {result['response'][:200]}{'...' if len(result['response']) > 200 else ''}")
     return result
+
+
+def print_summary(results):
+    """Print a latency/token summary table for all prompts in this run."""
+    results = [r for r in results if r]
+    if not results:
+        return
+    print(f"\n{'═' * 72}")
+    print("Latency summary")
+    print(f"{'═' * 72}")
+    print(f"{'#':<3}{'total ms':>10}{'inference ms':>14}{'tokens':>9}  prompt")
+    print(f"{'-' * 72}")
+    total_ms = 0.0
+    total_tokens = 0
+    for i, r in enumerate(results, 1):
+        lat = r["latency"]
+        total_ms += lat["total_ms"]
+        total_tokens += r["tokens"]
+        preview = r["prompt"][:34] + ("…" if len(r["prompt"]) > 34 else "")
+        print(f"{i:<3}{lat['total_ms']:>10.1f}{lat['inference_ms']:>14.1f}{r['tokens']:>9}  {preview}")
+    print(f"{'-' * 72}")
+    n = len(results)
+    print(f"{'avg':<3}{total_ms / n:>10.1f}{'':>14}{total_tokens // n:>9}")
+    print(f"{'sum':<3}{total_ms:>10.1f}{'':>14}{total_tokens:>9}")
 
 
 def mode_builtin(tracer):
     """Run the three built-in test prompts with a short gap between each."""
     print("\n[Mode] Running built-in test prompts...\n")
+    results = []
     for prompt in BUILTIN_PROMPTS:
-        run_prompt(tracer, prompt)
+        results.append(run_prompt(tracer, prompt))
         time.sleep(2)
+    return results
 
 
 def mode_single(tracer, prompt: str):
     """Run a single user-supplied prompt."""
     print("\n[Mode] Single prompt\n")
-    run_prompt(tracer, prompt)
+    return [run_prompt(tracer, prompt)]
 
 
 def mode_interactive(tracer):
@@ -47,6 +80,7 @@ def mode_interactive(tracer):
     print("\n[Mode] Interactive — type your prompt and press Enter.")
     print("       Type 'exit' or 'quit' to stop.\n")
 
+    results = []
     while True:
         try:
             prompt = input("You: ").strip()
@@ -60,7 +94,8 @@ def mode_interactive(tracer):
             print("Exiting.")
             break
 
-        run_prompt(tracer, prompt)
+        results.append(run_prompt(tracer, prompt))
+    return results
 
 
 def main():
@@ -83,17 +118,20 @@ def main():
 
     tracer, provider = setup_tracer()
 
+    results = []
     try:
         if args.interactive:
-            mode_interactive(tracer)
+            results = mode_interactive(tracer)
         elif args.prompt:
-            mode_single(tracer, args.prompt)
+            results = mode_single(tracer, args.prompt)
         else:
-            mode_builtin(tracer)
+            results = mode_builtin(tracer)
     finally:
+        print_summary(results)
         # Flush all pending spans before the process exits
         provider.force_flush()
-        print("\nAll traces exported to Dynatrace.")
+        print("\nTraces written locally (see ./traces/spans.jsonl). "
+              "Run 'python report.py' for an aggregated view.")
 
 
 if __name__ == "__main__":
