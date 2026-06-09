@@ -18,6 +18,9 @@ import urllib.request
 
 from dotenv import load_dotenv
 
+from env_bootstrap import ensure_env
+
+ensure_env()
 load_dotenv()
 
 INGEST_SCOPE = "openTelemetryTrace.ingest"

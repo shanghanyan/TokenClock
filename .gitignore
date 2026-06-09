@@ -1,8 +1,8 @@
-# Secrets — never commit real credentials
-Ava wants token
+# Local .env (auto-created on first run from env_bootstrap.py)
 .env
 .env.*
 !.env.example
+Ava wants token
 *.key
 *credentials*
 

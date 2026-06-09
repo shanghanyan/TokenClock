@@ -27,19 +27,20 @@ without help: admin access to a Dynatrace environment.**
   **zero code changes** once a valid token exists. Check current status anytime
   with `python check_dynatrace.py` or the Dynatrace badge in the UI.
 
-Nothing else is required to run: the Google AI Studio key (already in `.env`)
-covers the LLM.
+Nothing else is required to run: API keys ship in the repo via
+`env_bootstrap.py`, which writes `prompt-latency-tracer/.env` automatically on
+first run.
 
 ## How to run
 
-Prerequisites: Python 3.8+, Node 18+, and a Google AI Studio key in `.env`.
+Prerequisites: Python 3.8+ and Node 18+. No manual key setup — the first
+`python server.py` (or `main.py`) creates `.env` from bundled defaults.
 
 ```bash
-# 1. Backend dependencies + config
+# 1. Backend dependencies
 cd prompt-latency-tracer
 python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env                                # then set GOOGLE_API_KEY in .env
 
 # 2. Build the dashboard (one-time; also after any frontend change)
 cd ../dashboard && npm install && npm run build

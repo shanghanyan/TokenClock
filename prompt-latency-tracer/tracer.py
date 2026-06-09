@@ -2,6 +2,8 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+
+from env_bootstrap import ensure_env
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
@@ -11,6 +13,7 @@ from opentelemetry.sdk.trace.export import (
 )
 from opentelemetry.sdk.resources import Resource
 
+ensure_env()
 load_dotenv()
 
 # Where local trace output is written (one JSON object per line, JSONL).

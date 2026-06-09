@@ -9,7 +9,9 @@ from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 import usage
+from env_bootstrap import ensure_env
 
+ensure_env()
 load_dotenv()
 
 
