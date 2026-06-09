@@ -62,6 +62,20 @@ python check_dynatrace.py      # Dynatrace readiness check
 
 Both paths append spans to `traces/spans.jsonl`.
 
+### How to end a session
+
+**Web app (`python server.py`):** press `Ctrl+C` in the terminal where the server
+is running. That stops the Flask process and closes the API; the browser tab can
+stay open, but it will no longer receive live updates. Traces already written to
+`traces/spans.jsonl` are kept.
+
+**CLI (`python main.py`):** the process exits on its own when the prompt batch
+finishes. In interactive mode (`-i`), type `quit` or press `Ctrl+C` to stop early.
+
+**Optional cleanup:** if you activated the virtualenv, run `deactivate` when
+you're done. You do not need to delete `traces/spans.jsonl` or rebuild the
+dashboard between sessions.
+
 ## Configuration (`.env`)
 
 | Variable | Required | Purpose |
