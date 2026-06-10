@@ -17,9 +17,18 @@ from flask import Flask, jsonify, request, send_from_directory
 import usage
 import llm_client
 from check_dynatrace import check_readiness
+from check_dynatrace_mcp import check_mcp_readiness
 from llm_client import run_traced_prompt
 from main import BUILTIN_PROMPTS
 from tracer import TRACE_FILE, setup_tracer
+
+try:
+    from google.adk.agents import LlmAgent  # noqa: F401
+    _ADK_AVAILABLE = True
+except ImportError:
+    _ADK_AVAILABLE = False
+
+from tokenclock_agent.runner import optimize_prompt
 
 HERE = Path(__file__).resolve().parent
 DASHBOARD_DIST = HERE.parent / "dashboard" / "dist"
@@ -123,9 +132,18 @@ def api_traces():
 
 @app.get("/api/health")
 def api_health():
+    mcp = check_mcp_readiness()
     return jsonify({
         "dynatrace": check_readiness(),
+        "dynatrace_mcp": mcp,
         "google": usage.status(llm_client._KEYS),
+        "agent": {
+            "adk_available": _ADK_AVAILABLE,
+            "dynatrace_mcp_stub": mcp.get("stub", True),
+            "dynatrace_mcp_healthy": mcp.get("healthy", False),
+            "dynatrace_mcp_status": mcp.get("status"),
+            "model": os.getenv("MODEL_NAME", "gemini-2.5-flash"),
+        },
     })
 
 
@@ -158,6 +176,38 @@ def api_run():
         _run_lock.release()
 
     return jsonify({"ok": True, "mode": mode, "results": results})
+
+
+@app.post("/api/optimize")
+def api_optimize():
+    """Run the ADK agent to analyze and rewrite a prompt for lower tokens/latency."""
+    if not _ADK_AVAILABLE:
+        return jsonify({
+            "ok": False,
+            "error": "google-adk is not installed. Run: pip install -r requirements.txt",
+        }), 503
+
+    data = request.get_json(force=True, silent=True) or {}
+    prompt = (data.get("prompt") or "").strip()
+    if not prompt:
+        return jsonify({"ok": False, "error": "Prompt is empty."}), 400
+
+    if not _run_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "A run is already in progress."}), 409
+
+    try:
+        result = optimize_prompt(prompt, tracer=TRACER, provider=PROVIDER)
+        if result.error and not result.final_text:
+            return jsonify({"ok": False, "error": result.error}), 500
+        return jsonify({
+            "ok": True,
+            "report": result.final_text,
+            "events": result.events,
+            "stub_mcp": result.stub_mcp,
+            "error": result.error,
+        })
+    finally:
+        _run_lock.release()
 
 
 # ----------------------------- static app ---------------------------------

@@ -235,10 +235,51 @@ function GoogleBadge({ g }) {
   return <Badge {...cfg} title={title} />;
 }
 
+function McpBadge({ mcp, agent }) {
+  if (!mcp && !agent) return null;
+  const stub = mcp?.stub ?? agent?.dynatrace_mcp_stub;
+  const healthy = mcp?.healthy ?? agent?.dynatrace_mcp_healthy;
+  const status = mcp?.status ?? agent?.dynatrace_mcp_status;
+  let cfg;
+  if (stub) {
+    cfg = { color: C.amber, bg: "#1C1500", border: "#2A2000", label: "MCP: stub (local)" };
+  } else if (healthy) {
+    cfg = { color: C.emerald, bg: C.okBg, border: "#0C3018", label: "MCP: live" };
+  } else if (status === "needs_access") {
+    cfg = { color: C.amber, bg: "#1C1500", border: "#2A2000", label: "MCP: needs scopes" };
+  } else if (status === "not_configured") {
+    cfg = { color: C.mutedMid, bg: "#0A1018", border: C.border, label: "MCP: not configured" };
+  } else {
+    cfg = { color: C.red, bg: C.errBg, border: "#320A14", label: "MCP: error" };
+  }
+  const title = [
+    mcp?.message,
+    mcp?.mode ? `mode: ${mcp.mode}` : null,
+    mcp?.mcp_url,
+    mcp?.missing_scopes?.length ? `missing: ${mcp.missing_scopes.join(", ")}` : null,
+  ].filter(Boolean).join("\n");
+  return <Badge {...cfg} title={title} />;
+}
+
+function AgentBadge({ agent }) {
+  if (!agent) return null;
+  const cfg = !agent.adk_available
+    ? { color: C.red, bg: C.errBg, border: "#320A14", label: "ADK: missing" }
+    : { color: C.emerald, bg: C.okBg, border: "#0C3018", label: "ADK: ready" };
+  const title = [
+    agent.adk_available ? "Google Cloud Agent Builder (ADK) installed" : "pip install google-adk mcp",
+    agent.model ? `Model: ${agent.model}` : null,
+  ].filter(Boolean).join(" · ");
+  return <Badge {...cfg} title={title} />;
+}
+
 const API = {
   traces: () => fetch("/api/traces").then(r => r.json()),
   health: () => fetch("/api/health").then(r => r.json()),
   run: (body) => fetch("/api/run", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+  }).then(async r => ({ ok: r.ok, data: await r.json() })),
+  optimize: (body) => fetch("/api/optimize", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
   }).then(async r => ({ ok: r.ok, data: await r.json() })),
 };
@@ -250,6 +291,9 @@ export default function App() {
   const [running, setRunning] = useState(null);     // "auto" | "single" | null
   const [promptText, setPromptText] = useState("");
   const [runMsg, setRunMsg] = useState("");
+  const [optimizeText, setOptimizeText] = useState("");
+  const [optimizeReport, setOptimizeReport] = useState("");
+  const [optimizeMsg, setOptimizeMsg] = useState("");
   const [expandedId, setExpandedId] = useState(null);
   const [sortKey, setSortKey] = useState("timestamp");
   const [sortDir, setSortDir] = useState("asc");
@@ -287,6 +331,30 @@ export default function App() {
       }
     } catch {
       setRunMsg("Could not reach the server. Is server.py running?");
+    } finally {
+      setRunning(null);
+      refresh();
+    }
+  }
+
+  async function runOptimize() {
+    if (running) return;
+    setRunning("optimize");
+    setOptimizeMsg("");
+    setOptimizeReport("");
+    try {
+      const { ok, data } = await API.optimize({ prompt: optimizeText });
+      if (!ok || !data.ok) {
+        setOptimizeMsg(data?.error || "Optimization failed.");
+      } else {
+        setOptimizeReport(data.report || "");
+        setOptimizeMsg(data.stub_mcp
+          ? "Done (Dynatrace MCP stub — set DYNATRACE_MCP_STUB=0 for live tenant)."
+          : "Done (live Dynatrace MCP).");
+        setOptimizeText("");
+      }
+    } catch {
+      setOptimizeMsg("Could not reach the server. Is server.py running?");
     } finally {
       setRunning(null);
       refresh();
@@ -332,12 +400,17 @@ export default function App() {
   const srColor = stats.successRate >= 80 ? C.emerald : stats.successRate >= 50 ? C.amber : C.red;
   const busy = running !== null;
 
+  const reportBlocks = useMemo(() => {
+    if (!optimizeReport) return [];
+    return optimizeReport.split(/\n(?=## )/).filter(Boolean);
+  }, [optimizeReport]);
+
   return (
     <div style={{ background: C.bg, color: C.text, minHeight: "100vh", fontFamily: "Inter, -apple-system, system-ui, sans-serif", fontSize: 13 }}>
       {/* Nav */}
       <div style={{ borderBottom: `1px solid ${C.border}`, padding: "0 24px", display: "flex", alignItems: "center", justifyContent: "space-between", height: 50, position: "sticky", top: 0, background: C.bg, zIndex: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: C.heading, letterSpacing: "-0.2px" }}>Prompt Latency Tracer</span>
+          <span style={{ fontSize: 14, fontWeight: 600, color: C.heading, letterSpacing: "-0.2px" }}>TokenClock</span>
           <Badge
             color={live ? C.emerald : C.amber}
             bg={live ? C.okBg : "#1C1500"}
@@ -347,6 +420,8 @@ export default function App() {
           />
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <AgentBadge agent={health?.agent} />
+          <McpBadge mcp={health?.dynatrace_mcp} agent={health?.agent} />
           <DynatraceBadge dt={health?.dynatrace} />
           <GoogleBadge g={health?.google} />
         </div>
@@ -398,6 +473,55 @@ export default function App() {
           </div>
         </div>
         {runMsg && <div style={{ marginTop: -8, marginBottom: 18, fontSize: 12, color: C.mutedMid }}>{runMsg}</div>}
+
+        {/* Agent optimize */}
+        <div style={{ ...styles.card, padding: "16px 18px", marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: C.heading, marginBottom: 4 }}>
+                Prompt optimizer (ADK agent)
+              </div>
+              <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5, maxWidth: 640 }}>
+                Google Cloud Agent Builder agent powered by Gemini. It measures your prompt,
+                queries Dynatrace MCP for historical token/latency patterns, rewrites the prompt,
+                and verifies savings with a second traced run.
+              </div>
+            </div>
+          </div>
+          <textarea
+            value={optimizeText}
+            onChange={e => setOptimizeText(e.target.value)}
+            placeholder="Paste a verbose prompt to optimize for fewer tokens and lower latency…"
+            disabled={busy}
+            rows={3}
+            style={{
+              width: "100%", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8,
+              color: C.text, padding: "10px 12px", fontSize: 12.5, outline: "none", resize: "vertical",
+              fontFamily: "inherit", marginBottom: 12,
+            }}
+          />
+          <button onClick={runOptimize} disabled={busy || !optimizeText.trim()}
+            style={{
+              background: (busy || !optimizeText.trim()) ? "#0E2233" : C.emerald,
+              color: (busy || !optimizeText.trim()) ? C.muted : "#001019",
+              border: "none", borderRadius: 8, padding: "9px 20px", fontSize: 12.5, fontWeight: 600,
+              cursor: (busy || !optimizeText.trim()) ? "default" : "pointer",
+            }}>
+            {running === "optimize" ? <><span className="spinner" />Analyzing…</> : "Optimize with agent"}
+          </button>
+          {optimizeMsg && <div style={{ marginTop: 10, fontSize: 12, color: C.mutedMid }}>{optimizeMsg}</div>}
+          {optimizeReport && (
+            <div style={{
+              marginTop: 14, padding: "14px 16px", background: C.bg,
+              border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12.5, lineHeight: 1.55,
+              whiteSpace: "pre-wrap", fontFamily: "ui-monospace, monospace", color: C.text,
+            }}>
+              {reportBlocks.length > 1
+                ? reportBlocks.map((block, i) => <div key={i} style={{ marginBottom: i < reportBlocks.length - 1 ? 12 : 0 }}>{block}</div>)
+                : optimizeReport}
+            </div>
+          )}
+        </div>
 
         {/* Stat cards */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 20 }}>
