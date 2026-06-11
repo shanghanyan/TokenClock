@@ -29,6 +29,17 @@ def main():
     if result.error and not result.final_text:
         print(f"Error: {result.error}", file=sys.stderr)
         sys.exit(1)
+    if result.metrics.get("baseline"):
+        m = result.metrics
+        b, o = m["baseline"], m.get("optimized")
+        print(f"\n--- Metrics ---")
+        print(f"Tokens:  {b.get('tokens')} → {o.get('tokens') if o else '?'}")
+        print(f"Latency: {b.get('total_ms')}ms → {o.get('total_ms') if o else '?'}ms")
+        if m.get("savings"):
+            s = m["savings"]
+            print(f"Saved:   {s.get('tokens')} tokens, {s.get('total_ms')}ms")
+    if result.optimized_prompt:
+        print(f"\n--- Optimized prompt ---\n{result.optimized_prompt}\n")
     print(result.final_text)
     if result.error:
         print(f"\n(warning: {result.error})", file=sys.stderr)

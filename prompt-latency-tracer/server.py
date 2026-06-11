@@ -17,7 +17,7 @@ import usage
 import llm_client
 from llm_client import run_traced_prompt
 from main import BUILTIN_PROMPTS
-from tracer import TRACE_FILE, setup_tracer
+from tracer import TRACE_FILE, clear_traces, setup_tracer
 
 try:
     from google.adk.agents import LlmAgent  # noqa: F401
@@ -26,6 +26,7 @@ except ImportError:
     _ADK_AVAILABLE = False
 
 from tokenclock_agent.runner import optimize_prompt
+from optimization_store import clear_optimizations, load_optimizations, save_optimization
 
 HERE = Path(__file__).resolve().parent
 DASHBOARD_DIST = HERE.parent / "dashboard" / "dist"
@@ -122,6 +123,18 @@ def api_traces():
     return jsonify({"runs": parse_runs(TRACE_FILE)})
 
 
+@app.post("/api/traces/clear")
+def api_clear_traces():
+    """Remove stored prompt run data only; does not affect other API routes."""
+    if not _run_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "A run is in progress — try again shortly."}), 409
+    try:
+        removed = clear_traces()
+        return jsonify({"ok": True, "removed": removed})
+    finally:
+        _run_lock.release()
+
+
 @app.get("/api/health")
 def api_health():
     return jsonify({
@@ -184,12 +197,40 @@ def api_optimize():
         result = optimize_prompt(prompt, tracer=TRACER, provider=PROVIDER)
         if result.error and not result.final_text:
             return jsonify({"ok": False, "error": result.error}), 500
+        record = save_optimization(
+            original_prompt=prompt,
+            optimized_prompt=result.optimized_prompt,
+            metrics=result.metrics,
+            report=result.final_text,
+        )
         return jsonify({
             "ok": True,
+            "id": record["id"],
+            "timestamp": record["timestamp"],
+            "original_prompt": prompt,
             "report": result.final_text,
+            "metrics": result.metrics,
+            "optimized_prompt": result.optimized_prompt,
+            "measurements": result.measurements,
             "events": result.events,
             "error": result.error,
         })
+    finally:
+        _run_lock.release()
+
+
+@app.get("/api/optimizations")
+def api_optimizations():
+    return jsonify({"runs": load_optimizations()})
+
+
+@app.post("/api/optimizations/clear")
+def api_clear_optimizations():
+    if not _run_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "A run is in progress — try again shortly."}), 409
+    try:
+        removed = clear_optimizations()
+        return jsonify({"ok": True, "removed": removed})
     finally:
         _run_lock.release()
 

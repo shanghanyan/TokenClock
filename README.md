@@ -90,6 +90,32 @@ The agent (`tokenclock_agent/`) uses [Google ADK](https://google.github.io/adk-d
 
 Typical flow: read history → measure baseline → analyze → rewrite → measure optimized → report savings.
 
+### Using it in the dashboard
+
+1. Start the app (`python server.py`) and open the dashboard.
+2. Click **Optimizer** in the top navigation (or `#/optimizer`).
+3. Paste a verbose prompt and click **Optimize prompt**.
+4. Each run appears in **Optimization history** with:
+   - **Original** vs **Optimized** side by side (char/word counts)
+   - Before/after metrics (tokens, latency, inference)
+   - Expandable full agent report
+5. From **Traces**, use **Open in optimizer →** on any self-test prompt.
+
+### Using it from the CLI
+
+```bash
+python optimize.py "Write a comprehensive detailed guide to Python async with many examples"
+```
+
+Output is the same structured report printed to the terminal. New traces from the agent runs append to `traces/spans.jsonl`.
+
+### Clearing data
+
+| What | Dashboard | API |
+|------|-----------|-----|
+| Trace runs | **Traces** → Clear run data | `POST /api/traces/clear` |
+| Optimization history | **Optimizer** → Clear history | `POST /api/optimizations/clear` |
+
 ## Project layout
 
 ```
@@ -98,7 +124,8 @@ TokenClock/
   README.md
   dashboard/                 # React + Recharts UI
   prompt-latency-tracer/
-    server.py                # Flask app + /api/run, /api/optimize, /api/traces
+    optimization_store.py  # optimizations.jsonl persistence
+    server.py                # Flask: traces + optimizer APIs
     main.py                  # CLI tracing entry point
     optimize.py              # CLI agent entry point
     llm_client.py            # Gemini client with traced pipeline
@@ -109,6 +136,7 @@ TokenClock/
       agent.py               # ADK LlmAgent definition
       runner.py              # ADK Runner wrapper
       tools.py               # measure_prompt + get_trace_history
+      report_parser.py       # Parse report + measurement summaries
       trace_reader.py        # spans.jsonl parser
     traces/spans.jsonl       # trace output (created at runtime)
 ```

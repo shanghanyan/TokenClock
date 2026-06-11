@@ -8,7 +8,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tokenclock_agent.agent import build_agent
-from tokenclock_agent.tools import bind_tracer
+from tokenclock_agent.report_parser import parse_optimized_prompt, summarize_measurements
+from tokenclock_agent.tools import bind_tracer, get_measurements, reset_measurements
 
 try:
     from google.adk.runners import Runner
@@ -24,6 +25,9 @@ except ImportError:
 class OptimizeResult:
     final_text: str
     events: list[dict[str, Any]] = field(default_factory=list)
+    measurements: list[dict[str, Any]] = field(default_factory=list)
+    metrics: dict[str, Any] = field(default_factory=dict)
+    optimized_prompt: str | None = None
     error: str | None = None
 
 
@@ -36,6 +40,7 @@ async def _ainvoke(prompt: str, *, tracer, provider, model: str | None) -> Optim
         )
 
     bind_tracer(tracer, provider)
+    reset_measurements()
 
     session_service = InMemorySessionService()
     app_name = "tokenclock"
@@ -72,7 +77,14 @@ async def _ainvoke(prompt: str, *, tracer, provider, model: str | None) -> Optim
     finally:
         provider.force_flush()
 
-    return OptimizeResult(final_text=final_text, events=events)
+    measurements = get_measurements()
+    return OptimizeResult(
+        final_text=final_text,
+        events=events,
+        measurements=measurements,
+        metrics=summarize_measurements(measurements),
+        optimized_prompt=parse_optimized_prompt(final_text),
+    )
 
 
 def optimize_prompt(prompt: str, *, tracer, provider, model: str | None = None) -> OptimizeResult:

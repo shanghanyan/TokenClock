@@ -9,12 +9,21 @@ from tokenclock_agent.trace_reader import load_runs, summarize_runs
 
 _tracer = None
 _provider = None
+_measurements: list[dict[str, Any]] = []
 
 
 def bind_tracer(tracer, provider) -> None:
     global _tracer, _provider
     _tracer = tracer
     _provider = provider
+
+
+def reset_measurements() -> None:
+    _measurements.clear()
+
+
+def get_measurements() -> list[dict[str, Any]]:
+    return list(_measurements)
 
 
 def measure_prompt(prompt: str) -> dict[str, Any]:
@@ -35,7 +44,7 @@ def measure_prompt(prompt: str) -> dict[str, Any]:
         if _provider is not None:
             _provider.force_flush()
         lat = result["latency"]
-        return {
+        out = {
             "success": True,
             "prompt": prompt,
             "response_preview": result["response"][:300],
@@ -44,10 +53,14 @@ def measure_prompt(prompt: str) -> dict[str, Any]:
             "total_ms": lat["total_ms"],
             "inference_ms": lat["inference_ms"],
         }
+        _measurements.append(out)
+        return out
     except Exception as e:
         if _provider is not None:
             _provider.force_flush()
-        return {"success": False, "prompt": prompt, "error": str(e)}
+        out = {"success": False, "prompt": prompt, "error": str(e)}
+        _measurements.append(out)
+        return out
 
 
 def get_trace_history(limit: int = 20) -> dict[str, Any]:
