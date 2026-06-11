@@ -204,23 +204,16 @@ function Badge({ color, bg, border, label, title }) {
   );
 }
 
-function DynatraceBadge({ dt }) {
-  if (!dt) return null;
-  let s;
-  if (dt.status === "healthy") {
-    s = dt.exporting
-      ? { color: C.emerald, bg: C.okBg, border: "#0C3018", label: "Dynatrace: Exporting" }
-      : { color: C.emerald, bg: C.okBg, border: "#0C3018", label: "Dynatrace: Ready (export off)" };
-  } else {
-    s = {
-      needs_access: { color: C.amber, bg: "#1C1500", border: "#2A2000", label: "Dynatrace: Needs access" },
-      not_configured: { color: C.mutedMid, bg: "#0A1018", border: C.border, label: "Dynatrace: Not configured" },
-      error: { color: C.red, bg: C.errBg, border: "#320A14", label: "Dynatrace: Error" },
-    }[dt.status] || { color: C.red, bg: C.errBg, border: "#320A14", label: "Dynatrace: Error" };
-  }
-  const title = [dt.message, dt.export_enabled ? "Export: enabled" : "Export: disabled"]
-    .filter(Boolean).join(" · ");
-  return <Badge {...s} title={title} />;
+function AgentBadge({ agent }) {
+  if (!agent) return null;
+  const cfg = !agent.adk_available
+    ? { color: C.red, bg: C.errBg, border: "#320A14", label: "Agent: not installed" }
+    : { color: C.emerald, bg: C.okBg, border: "#0C3018", label: "Agent: ready" };
+  const title = [
+    agent.adk_available ? "Prompt optimizer (Google ADK + Gemini)" : "pip install google-adk",
+    agent.model ? `Model: ${agent.model}` : null,
+  ].filter(Boolean).join(" · ");
+  return <Badge {...cfg} title={title} />;
 }
 
 function GoogleBadge({ g }) {
@@ -232,44 +225,6 @@ function GoogleBadge({ g }) {
       ? { color: C.amber, bg: "#1C1500", border: "#2A2000", label: `Google: low (${g.remaining_total} left)` }
       : { color: C.emerald, bg: C.okBg, border: "#0C3018", label: `Google: ${g.remaining_total} left` };
   const title = g.keys?.map(k => `${k.id} ${k.fingerprint}: ${k.remaining}/${k.limit} left${k.exhausted ? " (exhausted)" : ""}`).join("\n");
-  return <Badge {...cfg} title={title} />;
-}
-
-function McpBadge({ mcp, agent }) {
-  if (!mcp && !agent) return null;
-  const stub = mcp?.stub ?? agent?.dynatrace_mcp_stub;
-  const healthy = mcp?.healthy ?? agent?.dynatrace_mcp_healthy;
-  const status = mcp?.status ?? agent?.dynatrace_mcp_status;
-  let cfg;
-  if (stub) {
-    cfg = { color: C.amber, bg: "#1C1500", border: "#2A2000", label: "MCP: stub (local)" };
-  } else if (healthy) {
-    cfg = { color: C.emerald, bg: C.okBg, border: "#0C3018", label: "MCP: live" };
-  } else if (status === "needs_access") {
-    cfg = { color: C.amber, bg: "#1C1500", border: "#2A2000", label: "MCP: needs scopes" };
-  } else if (status === "not_configured") {
-    cfg = { color: C.mutedMid, bg: "#0A1018", border: C.border, label: "MCP: not configured" };
-  } else {
-    cfg = { color: C.red, bg: C.errBg, border: "#320A14", label: "MCP: error" };
-  }
-  const title = [
-    mcp?.message,
-    mcp?.mode ? `mode: ${mcp.mode}` : null,
-    mcp?.mcp_url,
-    mcp?.missing_scopes?.length ? `missing: ${mcp.missing_scopes.join(", ")}` : null,
-  ].filter(Boolean).join("\n");
-  return <Badge {...cfg} title={title} />;
-}
-
-function AgentBadge({ agent }) {
-  if (!agent) return null;
-  const cfg = !agent.adk_available
-    ? { color: C.red, bg: C.errBg, border: "#320A14", label: "ADK: missing" }
-    : { color: C.emerald, bg: C.okBg, border: "#0C3018", label: "ADK: ready" };
-  const title = [
-    agent.adk_available ? "Google Cloud Agent Builder (ADK) installed" : "pip install google-adk mcp",
-    agent.model ? `Model: ${agent.model}` : null,
-  ].filter(Boolean).join(" · ");
   return <Badge {...cfg} title={title} />;
 }
 
@@ -348,9 +303,7 @@ export default function App() {
         setOptimizeMsg(data?.error || "Optimization failed.");
       } else {
         setOptimizeReport(data.report || "");
-        setOptimizeMsg(data.stub_mcp
-          ? "Done (Dynatrace MCP stub — set DYNATRACE_MCP_STUB=0 for live tenant)."
-          : "Done (live Dynatrace MCP).");
+        setOptimizeMsg("Optimization complete — new traces appended to the run history.");
         setOptimizeText("");
       }
     } catch {
@@ -421,8 +374,6 @@ export default function App() {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <AgentBadge agent={health?.agent} />
-          <McpBadge mcp={health?.dynatrace_mcp} agent={health?.agent} />
-          <DynatraceBadge dt={health?.dynatrace} />
           <GoogleBadge g={health?.google} />
         </div>
       </div>
@@ -479,12 +430,11 @@ export default function App() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 12 }}>
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, color: C.heading, marginBottom: 4 }}>
-                Prompt optimizer (ADK agent)
+                Prompt optimizer
               </div>
               <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5, maxWidth: 640 }}>
-                Google Cloud Agent Builder agent powered by Gemini. It measures your prompt,
-                queries Dynatrace MCP for historical token/latency patterns, rewrites the prompt,
-                and verifies savings with a second traced run.
+                Gemini agent that reads your local trace history, measures baseline latency and
+                tokens, rewrites the prompt, and verifies savings with a second run.
               </div>
             </div>
           </div>

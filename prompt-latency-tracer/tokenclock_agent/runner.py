@@ -25,21 +25,17 @@ class OptimizeResult:
     final_text: str
     events: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
-    stub_mcp: bool = True
 
 
 async def _ainvoke(prompt: str, *, tracer, provider, model: str | None) -> OptimizeResult:
     agent = build_agent(model=model)
     if agent is None or not _ADK_AVAILABLE:
         return OptimizeResult(
-            final_text=(
-                "google-adk is not installed. Run: pip install google-adk mcp"
-            ),
+            final_text="google-adk is not installed. Run: pip install -r requirements.txt",
             error="ADK not available",
         )
 
     bind_tracer(tracer, provider)
-    stub = os.getenv("DYNATRACE_MCP_STUB", "1").strip().lower() not in {"0", "false", "no"}
 
     session_service = InMemorySessionService()
     app_name = "tokenclock"
@@ -72,11 +68,11 @@ async def _ainvoke(prompt: str, *, tracer, provider, model: str | None) -> Optim
                     final_text = ev["text"]
             events.append(ev)
     except Exception as e:
-        return OptimizeResult(final_text="", events=events, error=str(e), stub_mcp=stub)
+        return OptimizeResult(final_text="", events=events, error=str(e))
     finally:
         provider.force_flush()
 
-    return OptimizeResult(final_text=final_text, events=events, stub_mcp=stub)
+    return OptimizeResult(final_text=final_text, events=events)
 
 
 def optimize_prompt(prompt: str, *, tracer, provider, model: str | None = None) -> OptimizeResult:

@@ -1,7 +1,6 @@
 # report.py
 """
-Aggregate the locally-exported OpenTelemetry spans (traces/spans.jsonl) into a
-latency report. This is the local stand-in for the Dynatrace trace view.
+Aggregate OpenTelemetry spans from traces/spans.jsonl into a latency report.
 
 Usage:
     python report.py

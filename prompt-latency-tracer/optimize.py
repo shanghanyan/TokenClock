@@ -8,7 +8,7 @@ from tracer import setup_tracer
 try:
     from tokenclock_agent.runner import optimize_prompt
 except ImportError:
-    print("Install agent deps: pip install google-adk mcp", file=sys.stderr)
+        print("Install agent deps: pip install google-adk", file=sys.stderr)
     sys.exit(1)
 
 
@@ -24,7 +24,7 @@ def main():
         parser.error("Provide a prompt as an argument or with -p")
 
     tracer, provider = setup_tracer()
-    print("Running TokenClock agent (ADK + Gemini + Dynatrace MCP)…\n")
+    print("Running TokenClock agent (Gemini + ADK)…\n")
     result = optimize_prompt(prompt, tracer=tracer, provider=provider)
     if result.error and not result.final_text:
         print(f"Error: {result.error}", file=sys.stderr)

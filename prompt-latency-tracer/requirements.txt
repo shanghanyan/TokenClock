@@ -1,8 +1,6 @@
 google-genai
 google-adk>=2.2.0
-mcp>=1.0.0
 opentelemetry-sdk
-opentelemetry-exporter-otlp-proto-http
 opentelemetry-semantic-conventions
 python-dotenv
 flask

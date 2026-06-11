@@ -100,7 +100,7 @@ def mode_interactive(tracer):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Prompt-to-response latency tracer with OpenTelemetry + Dynatrace"
+        description="TokenClock — trace Gemini latency and optimize prompts"
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(

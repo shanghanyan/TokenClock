@@ -1,12 +1,12 @@
-"""ADK FunctionTools for measuring prompt latency and token usage."""
+"""ADK FunctionTools for measuring prompts and reading local trace history."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from llm_client import run_traced_prompt
+from tokenclock_agent.trace_reader import load_runs, summarize_runs
 
-# Set by runner before each agent invocation.
 _tracer = None
 _provider = None
 
@@ -20,8 +20,7 @@ def bind_tracer(tracer, provider) -> None:
 def measure_prompt(prompt: str) -> dict[str, Any]:
     """Run a prompt through the traced Gemini pipeline and return latency and token metrics.
 
-    Use this to capture a baseline before optimizing, and again after proposing a rewrite
-    to verify token and latency savings.
+    Use for a baseline before optimizing and again on the rewritten prompt to verify savings.
 
     Args:
         prompt: The exact prompt text to send to Gemini.
@@ -30,7 +29,7 @@ def measure_prompt(prompt: str) -> dict[str, Any]:
         Dict with prompt, response preview, tokens, latency breakdown (ms), and success flag.
     """
     if _tracer is None:
-        return {"error": "Tracer not initialized — call bind_tracer() first."}
+        return {"error": "Tracer not initialized."}
     try:
         result = run_traced_prompt(_tracer, prompt)
         if _provider is not None:
@@ -49,3 +48,34 @@ def measure_prompt(prompt: str) -> dict[str, Any]:
         if _provider is not None:
             _provider.force_flush()
         return {"success": False, "prompt": prompt, "error": str(e)}
+
+
+def get_trace_history(limit: int = 20) -> dict[str, Any]:
+    """Return recent prompt runs from the local trace file with aggregate stats.
+
+    Use this to see how past prompts performed (tokens, latency) before suggesting
+    optimizations. Data comes from traces/spans.jsonl on disk.
+
+    Args:
+        limit: Maximum number of recent runs to include (default 20).
+
+    Returns:
+        Summary statistics plus a list of recent runs with prompt preview and metrics.
+    """
+    runs = load_runs()
+    summary = summarize_runs(runs)
+    recent = [
+        {
+            "timestamp": r["timestamp"],
+            "prompt_preview": r["prompt"][:120],
+            "total_ms": r["total_ms"],
+            "inference_ms": r["inference_ms"],
+            "total_tokens": r["total_tokens"],
+            "prompt_tokens": r["prompt_tokens"],
+            "completion_tokens": r["completion_tokens"],
+            "model": r["model"],
+            "success": r["success"],
+        }
+        for r in runs[-limit:]
+    ]
+    return {"summary": summary, "recent_runs": recent, "total_runs_on_disk": len(runs)}

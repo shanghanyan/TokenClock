@@ -1,9 +1,8 @@
 # server.py
 """
-Launches the Prompt Latency Tracer web app: serves the React dashboard and a
-small API to run tests, read traces, and report system health.
+TokenClock web app: React dashboard + API for tracing and prompt optimization.
 
-    python server.py     # starts http://127.0.0.1:5000 and opens the browser
+    python server.py     # http://127.0.0.1:5000
 """
 import json
 import os
@@ -16,8 +15,6 @@ from flask import Flask, jsonify, request, send_from_directory
 
 import usage
 import llm_client
-from check_dynatrace import check_readiness
-from check_dynatrace_mcp import check_mcp_readiness
 from llm_client import run_traced_prompt
 from main import BUILTIN_PROMPTS
 from tracer import TRACE_FILE, setup_tracer
@@ -34,14 +31,12 @@ HERE = Path(__file__).resolve().parent
 DASHBOARD_DIST = HERE.parent / "dashboard" / "dist"
 PORT = int(os.getenv("PORT", "5000"))
 
-# One tracer/provider for the server's lifetime; runs append to spans.jsonl.
 TRACER, PROVIDER = setup_tracer()
 _run_lock = threading.Lock()
 
 app = Flask(__name__, static_folder=str(DASHBOARD_DIST), static_url_path="")
 
 
-# ----------------------------- trace parsing ------------------------------
 def _trace_id(span):
     return (span.get("context") or {}).get("trace_id") or span.get("trace_id")
 
@@ -99,8 +94,6 @@ def parse_runs(path):
         has_err = (ra.get("pipeline.success") is False
                    or err_msg is not None
                    or any(_status_code(s) == "ERROR" for s in spans))
-        # Quota-exhausted (429) runs are infrastructure limits, not system
-        # behavior — flag them so the UI can color and exclude them.
         quota = has_err and ("RESOURCE_EXHAUSTED" in (err_msg or "")
                              or "429" in (err_msg or ""))
 
@@ -124,7 +117,6 @@ def parse_runs(path):
     return runs
 
 
-# -------------------------------- API -------------------------------------
 @app.get("/api/traces")
 def api_traces():
     return jsonify({"runs": parse_runs(TRACE_FILE)})
@@ -132,16 +124,10 @@ def api_traces():
 
 @app.get("/api/health")
 def api_health():
-    mcp = check_mcp_readiness()
     return jsonify({
-        "dynatrace": check_readiness(),
-        "dynatrace_mcp": mcp,
         "google": usage.status(llm_client._KEYS),
         "agent": {
             "adk_available": _ADK_AVAILABLE,
-            "dynatrace_mcp_stub": mcp.get("stub", True),
-            "dynatrace_mcp_healthy": mcp.get("healthy", False),
-            "dynatrace_mcp_status": mcp.get("status"),
             "model": os.getenv("MODEL_NAME", "gemini-2.5-flash"),
         },
     })
@@ -169,7 +155,7 @@ def api_run():
             try:
                 r = run_traced_prompt(TRACER, p)
                 results.append({"prompt": p, "ok": True, "tokens": r["tokens"]})
-            except Exception as e:  # one failed prompt shouldn't abort the batch
+            except Exception as e:
                 results.append({"prompt": p, "ok": False, "error": str(e)})
         PROVIDER.force_flush()
     finally:
@@ -180,7 +166,6 @@ def api_run():
 
 @app.post("/api/optimize")
 def api_optimize():
-    """Run the ADK agent to analyze and rewrite a prompt for lower tokens/latency."""
     if not _ADK_AVAILABLE:
         return jsonify({
             "ok": False,
@@ -203,27 +188,20 @@ def api_optimize():
             "ok": True,
             "report": result.final_text,
             "events": result.events,
-            "stub_mcp": result.stub_mcp,
             "error": result.error,
         })
     finally:
         _run_lock.release()
 
 
-# ----------------------------- static app ---------------------------------
 @app.get("/")
 def index():
     if not (DASHBOARD_DIST / "index.html").exists():
-        return ("Dashboard not built. Run: cd dashboard && npm install && npm run build",
-                503)
+        return ("Dashboard not built. Run: cd dashboard && npm install && npm run build", 503)
     return send_from_directory(DASHBOARD_DIST, "index.html")
 
 
-def _open_browser():
-    webbrowser.open(f"http://127.0.0.1:{PORT}")
-
-
 if __name__ == "__main__":
-    threading.Timer(1.2, _open_browser).start()
-    print(f"\nPrompt Latency Tracer running at http://127.0.0.1:{PORT}\n")
+    threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{PORT}")).start()
+    print(f"\nTokenClock running at http://127.0.0.1:{PORT}\n")
     app.run(host="127.0.0.1", port=PORT, threaded=True)
