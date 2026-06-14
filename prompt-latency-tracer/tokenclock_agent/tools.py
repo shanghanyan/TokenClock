@@ -10,6 +10,7 @@ from tokenclock_agent.trace_reader import load_runs, summarize_runs
 _tracer = None
 _provider = None
 _measurements: list[dict[str, Any]] = []
+_measure_pass = 0
 
 
 def bind_tracer(tracer, provider) -> None:
@@ -19,7 +20,9 @@ def bind_tracer(tracer, provider) -> None:
 
 
 def reset_measurements() -> None:
+    global _measure_pass
     _measurements.clear()
+    _measure_pass = 0
 
 
 def get_measurements() -> list[dict[str, Any]]:
@@ -39,14 +42,18 @@ def measure_prompt(prompt: str) -> dict[str, Any]:
     """
     if _tracer is None:
         return {"error": "Tracer not initialized."}
+    global _measure_pass
+    _measure_pass += 1
+    role = "baseline" if _measure_pass == 1 else "optimized" if _measure_pass == 2 else f"measure_{_measure_pass}"
     try:
-        result = run_traced_prompt(_tracer, prompt)
+        result = run_traced_prompt(_tracer, prompt, optimization_role=role)
         if _provider is not None:
             _provider.force_flush()
         lat = result["latency"]
         out = {
             "success": True,
             "prompt": prompt,
+            "role": role,
             "response_preview": result["response"][:300],
             "tokens": result["tokens"],
             "latency_ms": lat,

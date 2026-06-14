@@ -84,10 +84,13 @@ def _generate_with_retry(**kwargs):
             raise
 
 
-def run_traced_prompt(tracer, prompt: str) -> dict:
+def run_traced_prompt(tracer, prompt: str, *, optimization_role: str | None = None) -> dict:
     with tracer.start_as_current_span("llm.full_pipeline") as root_span:
         root_span.set_attribute("prompt.text", prompt[:200])
+        root_span.set_attribute("prompt.full", prompt)
         root_span.set_attribute("model.name", os.getenv("MODEL_NAME"))
+        if optimization_role:
+            root_span.set_attribute("optimization.role", optimization_role)
 
         # --- Stage 1: Prompt Preparation ---
         with tracer.start_as_current_span("llm.prompt_preparation") as prep_span:

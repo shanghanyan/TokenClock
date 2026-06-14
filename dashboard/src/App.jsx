@@ -15,11 +15,13 @@ export default function App() {
   const [live, setLive] = useState(false);
   const [health, setHealth] = useState(null);
   const [running, setRunning] = useState(null);
+  const [optimizations, setOptimizations] = useState([]);
 
   const refreshRuns = useCallback(async () => {
     try {
-      const [t, h] = await Promise.all([API.traces(), API.health()]);
+      const [t, h, o] = await Promise.all([API.traces(), API.health(), API.optimizations()]);
       if (Array.isArray(t.runs)) setRuns(t.runs);
+      if (Array.isArray(o.runs)) setOptimizations(o.runs);
       setHealth(h);
       setLive(true);
     } catch {
@@ -49,7 +51,7 @@ export default function App() {
             <NavTab href="#/optimizer" active={page === "optimizer"}>Optimizer</NavTab>
           </nav>
           <Badge color={live ? C.emerald : C.amber} bg={live ? C.okBg : "#1C1500"} border={live ? "#0C3018" : "#2A2000"}
-            label={live ? "LIVE" : "SAMPLE DATA"} title={live ? "Connected to server.py" : "Server not reachable"} />
+            label={live ? "LIVE" : "NOT LIVE"} title={live ? "Connected to server.py" : "Server not reachable"} />
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <AgentBadge agent={health?.agent} />
@@ -62,7 +64,7 @@ export default function App() {
         {page === "optimizer" ? (
           <OptimizerPage health={health} live={live} running={running} setRunning={setRunning} onRefresh={refreshRuns} />
         ) : (
-          <TracesPage live={live} running={running} setRunning={setRunning} refreshRuns={refreshRuns} runs={runs} setRuns={setRuns} />
+          <TracesPage live={live} running={running} setRunning={setRunning} refreshRuns={refreshRuns} runs={runs} setRuns={setRuns} optimizations={optimizations} />
         )}
       </div>
     </div>

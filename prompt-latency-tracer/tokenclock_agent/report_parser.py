@@ -10,18 +10,42 @@ def parse_optimized_prompt(report: str) -> str | None:
     """Extract the rewritten prompt from the agent's markdown report."""
     if not report:
         return None
-    section = re.search(
-        r"##\s*Optimized prompt\s*\n+(.*?)(?=\n##\s|\Z)",
+
+    m = re.search(
+        r"#{1,3}\s*Optimized prompt\b[^\n]*(?:\s*\n+|\s+)(.*?)(?=\n#{1,3}\s+\S|\Z)",
         report,
         re.DOTALL | re.IGNORECASE,
     )
-    if not section:
+    if not m:
         return None
-    body = section.group(1).strip()
-    fenced = re.match(r"^```(?:\w*\n)?(.+?)```$", body, re.DOTALL)
+
+    body = m.group(1).strip()
+    body = re.sub(r"^\*\*|\*\*$", "", body).strip()
+
+    fenced = re.match(r"^```(?:\w*\n)?(.+?)```\s*$", body, re.DOTALL)
     if fenced:
-        return fenced.group(1).strip()
-    return body.strip() or None
+        body = fenced.group(1).strip()
+
+    # Drop stray markdown list items if the model leaked into this section.
+    lines = []
+    for line in body.splitlines():
+        if re.match(r"^#{1,3}\s", line):
+            break
+        if re.match(r"^[-*]\s", line) and lines:
+            break
+        lines.append(line)
+    body = "\n".join(lines).strip().strip('"\'')
+    return body or None
+
+
+def resolve_optimized_prompt(report: str, metrics: dict[str, Any] | None) -> str | None:
+    """Parsed report text, else the prompt from the verification measure_prompt call."""
+    parsed = parse_optimized_prompt(report)
+    if parsed:
+        return parsed
+    opt = (metrics or {}).get("optimized") or {}
+    prompt = opt.get("prompt")
+    return prompt.strip() if isinstance(prompt, str) and prompt.strip() else None
 
 
 def summarize_measurements(measurements: list[dict[str, Any]]) -> dict[str, Any]:

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from tokenclock_agent.agent import build_agent
-from tokenclock_agent.report_parser import parse_optimized_prompt, summarize_measurements
+from tokenclock_agent.report_parser import parse_optimized_prompt, resolve_optimized_prompt, summarize_measurements
 from tokenclock_agent.tools import bind_tracer, get_measurements, reset_measurements
 
 try:
@@ -78,12 +78,13 @@ async def _ainvoke(prompt: str, *, tracer, provider, model: str | None) -> Optim
         provider.force_flush()
 
     measurements = get_measurements()
+    optimized_text = resolve_optimized_prompt(final_text, summarize_measurements(measurements))
     return OptimizeResult(
         final_text=final_text,
         events=events,
         measurements=measurements,
         metrics=summarize_measurements(measurements),
-        optimized_prompt=parse_optimized_prompt(final_text),
+        optimized_prompt=optimized_text,
     )
 
 

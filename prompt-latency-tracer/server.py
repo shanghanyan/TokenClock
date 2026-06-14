@@ -26,6 +26,7 @@ except ImportError:
     _ADK_AVAILABLE = False
 
 from tokenclock_agent.runner import optimize_prompt
+from tokenclock_agent.report_parser import resolve_optimized_prompt
 from optimization_store import clear_optimizations, load_optimizations, save_optimization
 
 HERE = Path(__file__).resolve().parent
@@ -101,7 +102,9 @@ def parse_runs(path):
         runs.append({
             "traceId": _trace_id(root),
             "timestamp": root.get("start_time"),
-            "prompt": ra.get("prompt.text", "—"),
+            "prompt": ra.get("prompt.full") or ra.get("prompt.text", "—"),
+            "promptPreview": ra.get("prompt.text", "—"),
+            "optimizationRole": ra.get("optimization.role"),
             "model": ra.get("model.name", "—"),
             "success": not has_err,
             "quota": quota,
@@ -199,7 +202,7 @@ def api_optimize():
             return jsonify({"ok": False, "error": result.error}), 500
         record = save_optimization(
             original_prompt=prompt,
-            optimized_prompt=result.optimized_prompt,
+            optimized_prompt=resolve_optimized_prompt(result.final_text, result.metrics),
             metrics=result.metrics,
             report=result.final_text,
         )
@@ -210,7 +213,7 @@ def api_optimize():
             "original_prompt": prompt,
             "report": result.final_text,
             "metrics": result.metrics,
-            "optimized_prompt": result.optimized_prompt,
+            "optimized_prompt": record["optimized_prompt"],
             "measurements": result.measurements,
             "events": result.events,
             "error": result.error,
@@ -221,7 +224,12 @@ def api_optimize():
 
 @app.get("/api/optimizations")
 def api_optimizations():
-    return jsonify({"runs": load_optimizations()})
+    runs = []
+    for row in load_optimizations():
+        row = dict(row)
+        row["optimized_prompt"] = resolve_optimized_prompt(row.get("report", ""), row.get("metrics")) or row.get("optimized_prompt")
+        runs.append(row)
+    return jsonify({"runs": runs})
 
 
 @app.post("/api/optimizations/clear")

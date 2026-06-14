@@ -5,6 +5,7 @@ import {
 } from "recharts";
 import { API } from "../api.js";
 import { C, STATUS_COLOR, fmtMs, fmtTime, percentile, styles, PROMPT_STORAGE_KEY } from "../theme.js";
+import { resolveOptimizedPrompt } from "../optimizeUtils.js";
 
 const SAMPLE_RUNS = [
   { traceId: "tr001", timestamp: "2025-06-08T09:45:12.000Z", prompt: "What are the best practices for writing async Python code?", model: "gemini-2.5-flash", success: true, quota: false, errorMsg: null, totalMs: 8200, inferenceMs: 8199.3, prepMs: 0.11, postMs: 0.09, totalTokens: 380, promptTokens: 11, completionTokens: 369 },
@@ -35,10 +36,61 @@ function WaterfallBar({ run, maxMs }) {
   );
 }
 
-function RunDetail({ run }) {
+function findOptimization(run, optimizations) {
+  const p = (run.prompt || run.promptPreview || "").trim();
+  if (!p) return null;
+  return optimizations.find(o => {
+    const orig = (o.original_prompt || "").trim();
+    const opt = resolveOptimizedPrompt(o) || "";
+    return orig === p || opt === p
+      || orig.startsWith(p) || p.startsWith(orig.slice(0, 200))
+      || o.metrics?.baseline?.prompt === p
+      || o.metrics?.optimized?.prompt === p;
+  }) || null;
+}
+
+function RoleBadge({ role }) {
+  if (!role) return <span style={{ color: C.muted, fontSize: 10 }}>—</span>;
+  const cfg = {
+    baseline: { color: C.violet, bg: C.violetBg, label: "original" },
+    optimized: { color: C.emerald, bg: C.okBg, label: "optimized" },
+  }[role] || { color: C.mutedMid, bg: C.cardAlt, label: role };
+  return (
+    <span style={{
+      fontSize: 9, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em",
+      color: cfg.color, background: cfg.bg, border: `1px solid ${C.border}`, borderRadius: 4, padding: "2px 6px",
+    }}>{cfg.label}</span>
+  );
+}
+
+function RunDetail({ run, optimizations }) {
+  const opt = findOptimization(run, optimizations);
+  const optimizedText = opt ? resolveOptimizedPrompt(opt) : null;
+  const showPair = opt && (run.optimizationRole === "baseline" || run.optimizationRole === "optimized" || optimizedText);
   const tps = run.success && run.inferenceMs > 0 ? (run.completionTokens / (run.inferenceMs / 1000)).toFixed(1) : null;
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28 }}>
+    <div>
+      {showPair && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={styles.detailLabel}>Optimization comparison</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.violet}`, borderRadius: 8, padding: "10px 12px", fontSize: 12, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 10, color: C.muted, marginBottom: 6 }}>ORIGINAL</div>
+              {opt.original_prompt || run.prompt}
+            </div>
+            <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.emerald}`, borderRadius: 8, padding: "10px 12px", fontSize: 12, lineHeight: 1.5 }}>
+              <div style={{ fontSize: 10, color: C.muted, marginBottom: 6 }}>OPTIMIZED</div>
+              {optimizedText || "—"}
+            </div>
+          </div>
+          {opt.metrics?.savings && (
+            <div style={{ marginTop: 8, fontSize: 11, color: C.emerald, fontFamily: "monospace" }}>
+              Saved {opt.metrics.savings.tokens} tokens ({opt.metrics.savings.tokens_pct}%), {fmtMs(opt.metrics.savings.total_ms)} latency
+            </div>
+          )}
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28 }}>
       <div>
         <div style={styles.detailLabel}>Stage breakdown</div>
         {[
@@ -68,6 +120,7 @@ function RunDetail({ run }) {
           </>
         ) : <div style={{ fontSize: 12, color: C.muted }}>No token data.</div>}
       </div>
+      </div>
     </div>
   );
 }
@@ -75,18 +128,20 @@ function RunDetail({ run }) {
 const COLS = [
   { label: "#", key: null, w: 36 },
   { label: "Time", key: "timestamp", w: 82 },
+  { label: "Role", key: "optimizationRole", w: 72 },
   { label: "Prompt", key: "prompt", w: null },
-  { label: "Model", key: "model", w: 138 },
-  { label: "Tokens", key: "totalTokens", w: 70 },
+  { label: "Model", key: "model", w: 120 },
+  { label: "Tokens", key: "totalTokens", w: 64 },
   { label: "Status", key: "success", w: 64 },
-  { label: "Pipeline", key: "totalMs", w: 240 },
+  { label: "Pipeline", key: "totalMs", w: 200 },
 ];
 
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
+  const status = payload[0]?.payload?.status;
   return (
     <div style={{ background: C.card, border: `1px solid ${C.borderMid}`, borderRadius: 8, padding: "10px 14px", fontSize: 12 }}>
-      <div style={{ color: C.muted, marginBottom: 4 }}>Run {label}</div>
+      <div style={{ color: C.muted, marginBottom: 4 }}>Run {label}{status ? ` · ${status}` : ""}</div>
       {payload.map(p => <div key={p.name} style={{ color: p.color || C.text }}>{p.name === "ms" ? fmtMs(p.value) : `${p.value} tokens`}</div>)}
     </div>
   );
@@ -97,7 +152,7 @@ function sendToOptimizer(text) {
   window.location.hash = "#/optimizer";
 }
 
-export default function TracesPage({ live, running, setRunning, refreshRuns, runs, setRuns }) {
+export default function TracesPage({ live, running, setRunning, refreshRuns, runs, setRuns, optimizations = [] }) {
   const [promptText, setPromptText] = useState("");
   const [runMsg, setRunMsg] = useState("");
   const [clearMsg, setClearMsg] = useState("");
@@ -248,9 +303,10 @@ export default function TracesPage({ live, running, setRunning, refreshRuns, run
               </tr>
             </thead>
             <tbody>
-              {sorted.length === 0 && <tr><td colSpan={7} style={{ ...styles.tdCell, textAlign: "center", color: C.muted, padding: "28px 0" }}>No runs yet.</td></tr>}
+              {sorted.length === 0 && <tr><td colSpan={8} style={{ ...styles.tdCell, textAlign: "center", color: C.muted, padding: "28px 0" }}>No runs yet.</td></tr>}
               {sorted.map((run, i) => {
                 const isExpanded = expandedId === run.traceId;
+                const preview = run.promptPreview || run.prompt;
                 return (
                   <React.Fragment key={run.traceId}>
                     <tr onClick={() => setExpandedId(isExpanded ? null : run.traceId)}
@@ -258,14 +314,15 @@ export default function TracesPage({ live, running, setRunning, refreshRuns, run
                       style={{ cursor: "pointer", background: isExpanded ? "#0D1B2E" : hovered === run.traceId ? "#0B1826" : "transparent", borderBottom: `1px solid ${C.border}` }}>
                       <td style={{ ...styles.tdCell, color: C.muted, fontFamily: "monospace", fontSize: 11 }}>{i + 1}</td>
                       <td style={{ ...styles.tdCell, fontFamily: "monospace", fontSize: 11, color: C.muted }}>{fmtTime(run.timestamp)}</td>
-                      <td style={{ ...styles.tdCell, maxWidth: 280 }}><div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{run.prompt}</div></td>
+                      <td style={styles.tdCell}><RoleBadge role={run.optimizationRole} /></td>
+                      <td style={{ ...styles.tdCell, maxWidth: 240 }}><div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={run.prompt}>{preview}</div></td>
                       <td style={{ ...styles.tdCell, fontFamily: "monospace", fontSize: 11, color: C.muted }}>{run.model}</td>
                       <td style={{ ...styles.tdCell, fontFamily: "monospace", fontSize: 12 }}>{run.totalTokens || "—"}</td>
                       <td style={styles.tdCell}><span style={{ fontSize: 10, fontWeight: 600, color: STATUS_COLOR[runStatus(run)] }}>{runStatus(run).toUpperCase()}</span></td>
                       <td style={{ ...styles.tdCell, paddingRight: 18 }}><WaterfallBar run={run} maxMs={maxMs} /></td>
                     </tr>
                     {isExpanded && (
-                      <tr><td colSpan={7} style={{ padding: "16px 22px", background: C.cardAlt, borderBottom: `1px solid ${C.border}` }}><RunDetail run={run} /></td></tr>
+                      <tr><td colSpan={8} style={{ padding: "16px 22px", background: C.cardAlt, borderBottom: `1px solid ${C.border}` }}><RunDetail run={run} optimizations={optimizations} /></td></tr>
                     )}
                   </React.Fragment>
                 );
@@ -277,14 +334,30 @@ export default function TracesPage({ live, running, setRunning, refreshRuns, run
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <div style={{ ...styles.card, padding: "16px 20px 12px" }}>
-          <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", marginBottom: 14 }}>Latency over time</div>
+          <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", marginBottom: 14, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>Latency over time</span>
+            <span style={{ display: "flex", gap: 10, textTransform: "none", letterSpacing: 0, fontWeight: 400 }}>
+              {[["ok", "ok"], ["quota", "quota"], ["error", "error"]].map(([k, lbl]) => (
+                <span key={k} style={{ display: "flex", alignItems: "center", gap: 4, color: C.muted }}>
+                  <span style={{ width: 7, height: 7, borderRadius: "50%", background: STATUS_COLOR[k], display: "inline-block" }} />{lbl}
+                </span>
+              ))}
+            </span>
+          </div>
           <ResponsiveContainer width="100%" height={160}>
             <LineChart data={lineData} margin={{ top: 4, right: 10, bottom: 16, left: -8 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
               <XAxis dataKey="idx" stroke={C.border} tick={{ fontSize: 10, fill: C.muted }} />
               <YAxis stroke={C.border} tick={{ fontSize: 10, fill: C.muted }} tickFormatter={fmtMs} width={46} />
               <Tooltip content={<CustomTooltip />} />
-              <Line type="monotone" dataKey="ms" stroke={C.cyan} strokeWidth={1.5} dot={false} />
+              <Line type="monotone" dataKey="ms" stroke={C.cyan} strokeWidth={1.5}
+                dot={(props) => {
+                  const { cx, cy, index } = props;
+                  const d = lineData[index];
+                  return <circle key={index} cx={cx} cy={cy} r={5} fill={STATUS_COLOR[d?.status] || C.cyan} stroke={C.bg} strokeWidth={1.5} />;
+                }}
+                activeDot={false}
+              />
             </LineChart>
           </ResponsiveContainer>
         </div>

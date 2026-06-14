@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { C, fmtMs, fmtDateTime, styles } from "../theme.js";
+import { resolveOptimizedPrompt } from "../optimizeUtils.js";
 
 function Delta({ value, pct, fmt = v => v, invert = false }) {
   if (value == null) return <span style={{ color: C.muted }}>—</span>;
@@ -68,6 +69,7 @@ export function OptimizationRun({ run, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   const savings = run.metrics?.savings;
   const improved = savings && savings.tokens > 0;
+  const optimizedText = resolveOptimizedPrompt(run);
 
   return (
     <div style={{ ...styles.card, overflow: "hidden", marginBottom: 12 }}>
@@ -101,7 +103,7 @@ export function OptimizationRun({ run, defaultOpen = false }) {
         <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${C.border}` }}>
           <div style={{ display: "flex", gap: 14, marginTop: 14 }}>
             <PromptColumn label="Original" text={run.original_prompt} accent={C.violet} />
-            <PromptColumn label="Optimized" text={run.optimized_prompt} accent={C.emerald} />
+            <PromptColumn label="Optimized" text={optimizedText} accent={C.emerald} />
           </div>
           <MetricsRow metrics={run.metrics} />
           {run.report && (
