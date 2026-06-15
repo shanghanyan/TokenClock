@@ -32,9 +32,9 @@ export function GoogleBadge({ g }) {
   const cfg = exhausted
     ? { color: C.red, bg: C.errBg, border: "#320A14", label: "Google: quota exhausted" }
     : g.warning
-      ? { color: C.amber, bg: "#1C1500", border: "#2A2000", label: `Google: low (${g.remaining_total} left)` }
-      : { color: C.emerald, bg: C.okBg, border: "#0C3018", label: `Google: ${g.remaining_total} left` };
-  const title = g.keys?.map(k => `${k.id} ${k.fingerprint}: ${k.remaining}/${k.limit} left${k.exhausted ? " (exhausted)" : ""}`).join("\n");
+      ? { color: C.amber, bg: "#1C1500", border: "#2A2000", label: `Google: low (~${g.remaining_total} requests left)` }
+      : { color: C.emerald, bg: C.okBg, border: "#0C3018", label: `Google: ~${g.remaining_total} requests left` };
+  const title = g.keys?.map(k => `${k.id} ${k.fingerprint}: ~${k.remaining}/${k.limit} requests left (local estimate)${k.exhausted ? " — exhausted" : ""}`).join("\n");
   return <Badge {...cfg} title={title} />;
 }
 
