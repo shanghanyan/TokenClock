@@ -2,16 +2,11 @@
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-from env_bootstrap import ensure_env
+import env  # noqa: F401 — loads .env
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, ConsoleSpanExporter
 from opentelemetry.sdk.resources import Resource
-
-ensure_env()
-load_dotenv()
 
 TRACE_DIR = Path(__file__).resolve().parent / "traces"
 TRACE_FILE = TRACE_DIR / "spans.jsonl"

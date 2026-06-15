@@ -4,15 +4,12 @@ import time
 from google import genai
 from google.genai import types
 from google.genai import errors as genai_errors
-from dotenv import load_dotenv
+import env  # noqa: F401 — loads .env
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
 import usage
-from env_bootstrap import ensure_env
-
-ensure_env()
-load_dotenv()
+import env  # noqa: F401 — loads .env before key reads
 
 
 def _load_keys():
