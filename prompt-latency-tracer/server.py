@@ -2,10 +2,11 @@
 """
 TokenClock web app: React dashboard + API for tracing and prompt optimization.
 
-    python server.py     # http://127.0.0.1:5000
+    python server.py     # http://127.0.0.1:5001  (5000 is often taken by macOS AirPlay)
 """
 import json
 import os
+import socket
 import threading
 import webbrowser
 from datetime import datetime
@@ -14,10 +15,10 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 
 import usage
-import llm_client
+import llm_client  # loads .env via env.py
 from llm_client import run_traced_prompt
 from main import BUILTIN_PROMPTS
-from tracer import TRACE_FILE, clear_traces, setup_tracer
+from tracer import TRACE_FILE, clear_traces, delete_trace, setup_tracer
 
 try:
     from google.adk.agents import LlmAgent  # noqa: F401
@@ -31,7 +32,23 @@ from optimization_store import clear_optimizations, load_optimizations, save_opt
 
 HERE = Path(__file__).resolve().parent
 DASHBOARD_DIST = HERE.parent / "dashboard" / "dist"
-PORT = int(os.getenv("PORT", "5000"))
+
+
+def _pick_port(preferred: int) -> int:
+    """Use preferred port, or the next free port on 127.0.0.1 (macOS AirPlay often owns 5000)."""
+    for port in range(preferred, preferred + 10):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    return preferred
+
+
+PREFERRED_PORT = int(os.getenv("PORT", "5001"))
+PORT = _pick_port(PREFERRED_PORT)
 
 TRACER, PROVIDER = setup_tracer()
 _run_lock = threading.Lock()
@@ -121,9 +138,63 @@ def parse_runs(path):
     return runs
 
 
+def _optimized_text(opt: dict) -> str:
+    return (
+        resolve_optimized_prompt(opt.get("report", ""), opt.get("metrics"))
+        or opt.get("optimized_prompt")
+        or ""
+    ).strip()
+
+
+def enrich_runs_with_optimizations(runs: list[dict], optimizations: list[dict]) -> None:
+    """Attach original/optimized prompt text to trace runs from optimization history."""
+    for run in runs:
+        run["originalPrompt"] = None
+        run["optimizedPrompt"] = None
+        p = (run.get("prompt") or run.get("promptPreview") or "").strip()
+        if not p:
+            continue
+        for opt in optimizations:
+            orig = (opt.get("original_prompt") or "").strip()
+            opt_text = _optimized_text(opt)
+            baseline_p = ((opt.get("metrics") or {}).get("baseline") or {}).get("prompt", "")
+            optimized_p = ((opt.get("metrics") or {}).get("optimized") or {}).get("prompt", "")
+            if p in {orig, opt_text, baseline_p, optimized_p} or (
+                orig and (orig.startswith(p) or p.startswith(orig[:200]))
+            ):
+                run["originalPrompt"] = orig or baseline_p or None
+                run["optimizedPrompt"] = opt_text or optimized_p or None
+                run["optimizationSavings"] = (opt.get("metrics") or {}).get("savings")
+                break
+        if run["optimizationRole"] == "baseline" and not run["originalPrompt"]:
+            run["originalPrompt"] = p
+        if run["optimizationRole"] == "optimized" and not run["optimizedPrompt"]:
+            run["optimizedPrompt"] = p
+
+
 @app.get("/api/traces")
 def api_traces():
-    return jsonify({"runs": parse_runs(TRACE_FILE)})
+    optimizations = load_optimizations()
+    runs = parse_runs(TRACE_FILE)
+    enrich_runs_with_optimizations(runs, optimizations)
+    return jsonify({"runs": runs})
+
+
+@app.post("/api/traces/delete")
+def api_delete_trace():
+    """Remove one trace run by traceId."""
+    data = request.get_json(force=True, silent=True) or {}
+    trace_id = (data.get("traceId") or "").strip()
+    if not trace_id:
+        return jsonify({"ok": False, "error": "traceId is required."}), 400
+    if not _run_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "A run is in progress — try again shortly."}), 409
+    try:
+        if not delete_trace(trace_id):
+            return jsonify({"ok": False, "error": "Trace not found."}), 404
+        return jsonify({"ok": True, "traceId": trace_id})
+    finally:
+        _run_lock.release()
 
 
 @app.post("/api/traces/clear")
@@ -251,6 +322,12 @@ def index():
 
 
 if __name__ == "__main__":
-    threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{PORT}")).start()
-    print(f"\nTokenClock running at http://127.0.0.1:{PORT}\n")
+    url = f"http://127.0.0.1:{PORT}"
+    if PORT != PREFERRED_PORT:
+        print(f"\n[port] {PREFERRED_PORT} unavailable — using {PORT} instead.")
+        if PREFERRED_PORT == 5000:
+            print("[port] On macOS, disable AirPlay Receiver (System Settings → AirDrop & Handoff)")
+            print("       or set PORT=5001 in .env.\n")
+    threading.Timer(1.2, lambda: webbrowser.open(url)).start()
+    print(f"\nTokenClock running at {url}\n")
     app.run(host="127.0.0.1", port=PORT, threaded=True)

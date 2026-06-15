@@ -5,12 +5,6 @@ import {
 } from "recharts";
 import { API } from "../api.js";
 import { C, STATUS_COLOR, fmtMs, fmtTime, percentile, styles, PROMPT_STORAGE_KEY } from "../theme.js";
-import { resolveOptimizedPrompt } from "../optimizeUtils.js";
-
-const SAMPLE_RUNS = [
-  { traceId: "tr001", timestamp: "2025-06-08T09:45:12.000Z", prompt: "What are the best practices for writing async Python code?", model: "gemini-2.5-flash", success: true, quota: false, errorMsg: null, totalMs: 8200, inferenceMs: 8199.3, prepMs: 0.11, postMs: 0.09, totalTokens: 380, promptTokens: 11, completionTokens: 369 },
-  { traceId: "tr002", timestamp: "2025-06-08T09:51:33.000Z", prompt: "Write a haiku about recursion in programming.", model: "gemini-2.5-flash", success: true, quota: false, errorMsg: null, totalMs: 8500, inferenceMs: 8499.2, prepMs: 0.08, postMs: 0.07, totalTokens: 195, promptTokens: 8, completionTokens: 187 },
-];
 
 const runStatus = r => (r.success ? "ok" : r.quota ? "quota" : "error");
 
@@ -36,37 +30,71 @@ function WaterfallBar({ run, maxMs }) {
   );
 }
 
-function findOptimization(run, optimizations) {
-  const p = (run.prompt || run.promptPreview || "").trim();
-  if (!p) return null;
-  return optimizations.find(o => {
-    const orig = (o.original_prompt || "").trim();
-    const opt = resolveOptimizedPrompt(o) || "";
-    return orig === p || opt === p
-      || orig.startsWith(p) || p.startsWith(orig.slice(0, 200))
-      || o.metrics?.baseline?.prompt === p
-      || o.metrics?.optimized?.prompt === p;
-  }) || null;
+function PromptCell({ run }) {
+  const orig = run.originalPrompt;
+  const opt = run.optimizedPrompt;
+  if (orig && opt) {
+    return (
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 2 }}>Original</div>
+        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12 }} title={orig}>{orig}</div>
+        <div style={{ fontSize: 9, color: C.emerald, textTransform: "uppercase", letterSpacing: "0.06em", marginTop: 6, marginBottom: 2 }}>Optimized</div>
+        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, color: C.emerald }} title={opt}>{opt}</div>
+      </div>
+    );
+  }
+  const preview = run.promptPreview || run.prompt;
+  return (
+    <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={run.prompt}>{preview}</div>
+  );
 }
 
-function RoleBadge({ role }) {
-  if (!role) return <span style={{ color: C.muted, fontSize: 10 }}>—</span>;
-  const cfg = {
-    baseline: { color: C.violet, bg: C.violetBg, label: "original" },
-    optimized: { color: C.emerald, bg: C.okBg, label: "optimized" },
-  }[role] || { color: C.mutedMid, bg: C.cardAlt, label: role };
+function TrashButton({ onClick, disabled }) {
+  return (
+    <button
+      type="button"
+      title="Delete run"
+      disabled={disabled}
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      style={{
+        background: "transparent", border: "none", padding: 4, cursor: disabled ? "default" : "pointer",
+        color: disabled ? C.muted : C.red, display: "flex", alignItems: "center", justifyContent: "center",
+        opacity: disabled ? 0.4 : 0.85,
+      }}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M3 6h18" />
+        <path d="M8 6V4h8v2" />
+        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+      </svg>
+    </button>
+  );
+}
+
+function runRoleLabel(run) {
+  if (run.optimizationRole === "baseline" || run.optimizationRole === "optimized") return "compare";
+  if (run.originalPrompt && run.optimizedPrompt) return "compare";
+  return "test";
+}
+
+function RoleBadge({ run }) {
+  const label = runRoleLabel(run);
+  const cfg = label === "compare"
+    ? { color: C.violet, bg: C.violetBg }
+    : { color: C.cyan, bg: C.cyanBg };
   return (
     <span style={{
       fontSize: 9, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em",
       color: cfg.color, background: cfg.bg, border: `1px solid ${C.border}`, borderRadius: 4, padding: "2px 6px",
-    }}>{cfg.label}</span>
+    }}>{label}</span>
   );
 }
 
-function RunDetail({ run, optimizations }) {
-  const opt = findOptimization(run, optimizations);
-  const optimizedText = opt ? resolveOptimizedPrompt(opt) : null;
-  const showPair = opt && (run.optimizationRole === "baseline" || run.optimizationRole === "optimized" || optimizedText);
+function RunDetail({ run }) {
+  const orig = run.originalPrompt || run.prompt;
+  const opt = run.optimizedPrompt;
+  const showPair = orig && opt;
   const tps = run.success && run.inferenceMs > 0 ? (run.completionTokens / (run.inferenceMs / 1000)).toFixed(1) : null;
   return (
     <div>
@@ -76,16 +104,16 @@ function RunDetail({ run, optimizations }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.violet}`, borderRadius: 8, padding: "10px 12px", fontSize: 12, lineHeight: 1.5 }}>
               <div style={{ fontSize: 10, color: C.muted, marginBottom: 6 }}>ORIGINAL</div>
-              {opt.original_prompt || run.prompt}
+              {orig}
             </div>
             <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderLeft: `3px solid ${C.emerald}`, borderRadius: 8, padding: "10px 12px", fontSize: 12, lineHeight: 1.5 }}>
               <div style={{ fontSize: 10, color: C.muted, marginBottom: 6 }}>OPTIMIZED</div>
-              {optimizedText || "—"}
+              {opt}
             </div>
           </div>
-          {opt.metrics?.savings && (
+          {run.optimizationSavings && (
             <div style={{ marginTop: 8, fontSize: 11, color: C.emerald, fontFamily: "monospace" }}>
-              Saved {opt.metrics.savings.tokens} tokens ({opt.metrics.savings.tokens_pct}%), {fmtMs(opt.metrics.savings.total_ms)} latency
+              Saved {run.optimizationSavings.tokens} tokens ({run.optimizationSavings.tokens_pct}%), {fmtMs(run.optimizationSavings.total_ms)} latency
             </div>
           )}
         </div>
@@ -133,7 +161,8 @@ const COLS = [
   { label: "Model", key: "model", w: 120 },
   { label: "Tokens", key: "totalTokens", w: 64 },
   { label: "Status", key: "success", w: 64 },
-  { label: "Pipeline", key: "totalMs", w: 200 },
+  { label: "Pipeline", key: "totalMs", w: 180 },
+  { label: "", key: null, w: 40 },
 ];
 
 const CustomTooltip = ({ active, payload, label }) => {
@@ -152,7 +181,7 @@ function sendToOptimizer(text) {
   window.location.hash = "#/optimizer";
 }
 
-export default function TracesPage({ live, running, setRunning, refreshRuns, runs, setRuns, optimizations = [] }) {
+export default function TracesPage({ live, running, setRunning, refreshRuns, runs, setRuns }) {
   const [promptText, setPromptText] = useState("");
   const [runMsg, setRunMsg] = useState("");
   const [clearMsg, setClearMsg] = useState("");
@@ -180,6 +209,22 @@ export default function TracesPage({ live, running, setRunning, refreshRuns, run
       setRunning(null);
       refreshRuns();
     }
+  }
+
+  async function deleteRun(traceId) {
+    if (running || !live) return;
+    setClearMsg("");
+    try {
+      const { ok, data } = await API.deleteTrace(traceId);
+      if (!ok || !data.ok) setClearMsg(data?.error || "Could not delete run.");
+      else {
+        setRuns(prev => prev.filter(r => r.traceId !== traceId));
+        if (expandedId === traceId) setExpandedId(null);
+      }
+    } catch {
+      setClearMsg("Could not reach the server.");
+    }
+    refreshRuns();
   }
 
   async function clearHistory() {
@@ -303,10 +348,9 @@ export default function TracesPage({ live, running, setRunning, refreshRuns, run
               </tr>
             </thead>
             <tbody>
-              {sorted.length === 0 && <tr><td colSpan={8} style={{ ...styles.tdCell, textAlign: "center", color: C.muted, padding: "28px 0" }}>No runs yet.</td></tr>}
+              {sorted.length === 0 && <tr><td colSpan={9} style={{ ...styles.tdCell, textAlign: "center", color: C.muted, padding: "28px 0" }}>No runs yet.</td></tr>}
               {sorted.map((run, i) => {
                 const isExpanded = expandedId === run.traceId;
-                const preview = run.promptPreview || run.prompt;
                 return (
                   <React.Fragment key={run.traceId}>
                     <tr onClick={() => setExpandedId(isExpanded ? null : run.traceId)}
@@ -314,15 +358,18 @@ export default function TracesPage({ live, running, setRunning, refreshRuns, run
                       style={{ cursor: "pointer", background: isExpanded ? "#0D1B2E" : hovered === run.traceId ? "#0B1826" : "transparent", borderBottom: `1px solid ${C.border}` }}>
                       <td style={{ ...styles.tdCell, color: C.muted, fontFamily: "monospace", fontSize: 11 }}>{i + 1}</td>
                       <td style={{ ...styles.tdCell, fontFamily: "monospace", fontSize: 11, color: C.muted }}>{fmtTime(run.timestamp)}</td>
-                      <td style={styles.tdCell}><RoleBadge role={run.optimizationRole} /></td>
-                      <td style={{ ...styles.tdCell, maxWidth: 240 }}><div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={run.prompt}>{preview}</div></td>
+                      <td style={styles.tdCell}><RoleBadge run={run} /></td>
+                      <td style={{ ...styles.tdCell, maxWidth: 280 }}><PromptCell run={run} /></td>
                       <td style={{ ...styles.tdCell, fontFamily: "monospace", fontSize: 11, color: C.muted }}>{run.model}</td>
                       <td style={{ ...styles.tdCell, fontFamily: "monospace", fontSize: 12 }}>{run.totalTokens || "—"}</td>
                       <td style={styles.tdCell}><span style={{ fontSize: 10, fontWeight: 600, color: STATUS_COLOR[runStatus(run)] }}>{runStatus(run).toUpperCase()}</span></td>
-                      <td style={{ ...styles.tdCell, paddingRight: 18 }}><WaterfallBar run={run} maxMs={maxMs} /></td>
+                      <td style={{ ...styles.tdCell, paddingRight: 8 }}><WaterfallBar run={run} maxMs={maxMs} /></td>
+                      <td style={{ ...styles.tdCell, width: 40, paddingRight: 12 }}>
+                        <TrashButton onClick={() => deleteRun(run.traceId)} disabled={busy || !live} />
+                      </td>
                     </tr>
                     {isExpanded && (
-                      <tr><td colSpan={8} style={{ padding: "16px 22px", background: C.cardAlt, borderBottom: `1px solid ${C.border}` }}><RunDetail run={run} optimizations={optimizations} /></td></tr>
+                      <tr><td colSpan={9} style={{ padding: "16px 22px", background: C.cardAlt, borderBottom: `1px solid ${C.border}` }}><RunDetail run={run} /></td></tr>
                     )}
                   </React.Fragment>
                 );
@@ -379,5 +426,3 @@ export default function TracesPage({ live, running, setRunning, refreshRuns, run
     </div>
   );
 }
-
-export { SAMPLE_RUNS };

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { API } from "./api.js";
 import { C } from "./theme.js";
 import { Badge, AgentBadge, GoogleBadge, NavTab, QuotaWarning } from "./components/shared.jsx";
-import TracesPage, { SAMPLE_RUNS } from "./pages/TracesPage.jsx";
+import TracesPage from "./pages/TracesPage.jsx";
 import OptimizerPage from "./pages/OptimizerPage.jsx";
 
 function pageFromHash() {
@@ -11,21 +11,20 @@ function pageFromHash() {
 
 export default function App() {
   const [page, setPage] = useState(pageFromHash);
-  const [runs, setRuns] = useState(SAMPLE_RUNS);
+  const [runs, setRuns] = useState([]);
   const [live, setLive] = useState(false);
   const [health, setHealth] = useState(null);
   const [running, setRunning] = useState(null);
-  const [optimizations, setOptimizations] = useState([]);
 
   const refreshRuns = useCallback(async () => {
     try {
-      const [t, h, o] = await Promise.all([API.traces(), API.health(), API.optimizations()]);
+      const [t, h] = await Promise.all([API.traces(), API.health()]);
       if (Array.isArray(t.runs)) setRuns(t.runs);
-      if (Array.isArray(o.runs)) setOptimizations(o.runs);
       setHealth(h);
       setLive(true);
     } catch {
       setLive(false);
+      setRuns([]);
     }
   }, []);
 
@@ -64,7 +63,7 @@ export default function App() {
         {page === "optimizer" ? (
           <OptimizerPage health={health} live={live} running={running} setRunning={setRunning} onRefresh={refreshRuns} />
         ) : (
-          <TracesPage live={live} running={running} setRunning={setRunning} refreshRuns={refreshRuns} runs={runs} setRuns={setRuns} optimizations={optimizations} />
+          <TracesPage live={live} running={running} setRunning={setRunning} refreshRuns={refreshRuns} runs={runs} setRuns={setRuns} />
         )}
       </div>
     </div>

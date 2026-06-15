@@ -42,7 +42,7 @@ cd ../dashboard && npm install && npm run build
 cd ../prompt-latency-tracer && python server.py
 ```
 
-Opens http://127.0.0.1:5000 in your browser.
+Opens http://127.0.0.1:5001 in your browser (port 5001 avoids macOS AirPlay on 5000).
 
 ### CLI
 
@@ -64,7 +64,7 @@ Press `Ctrl+C` to stop the web server. Traces in `traces/spans.jsonl` are kept b
 | `GOOGLE_API_KEY_2` | no | Fallback key; auto-rotates on 429 quota errors |
 | `MODEL_NAME` | yes | e.g. `gemini-2.5-flash` |
 | `OTEL_CONSOLE` | no | `1` to also print spans to the terminal |
-| `PORT` | no | Web server port (default `5000`) |
+| `PORT` | no | Web server port (default `5001`; avoid `5000` on macOS — used by AirPlay) |
 
 **Free-tier note:** `gemini-2.5-flash` is capped at ~20 requests/day per key. The optimizer uses 2+ calls per run, so budget accordingly. On `429 RESOURCE_EXHAUSTED` the client rotates to `GOOGLE_API_KEY_2` if set.
 
@@ -123,6 +123,7 @@ Output is the same structured report printed to the terminal. New traces from th
 | What | Dashboard | API |
 |------|-----------|-----|
 | Trace runs | **Traces** → Clear run data | `POST /api/traces/clear` |
+| Single trace run | **Traces** → trash icon on a row | `POST /api/traces/delete` |
 | Optimization history | **Optimizer** → Clear history | `POST /api/optimizations/clear` |
 
 ## Project layout
@@ -161,7 +162,7 @@ cd dashboard && npm run build
 For hot-reload UI development:
 
 ```bash
-cd dashboard && npm run dev    # Vite dev server; falls back to sample data without backend
+cd dashboard && npm run dev    # Vite dev server (run server.py separately for live API data)
 ```
 
 Run the backend alongside for live data: `python server.py`.

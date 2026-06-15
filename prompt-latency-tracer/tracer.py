@@ -1,4 +1,4 @@
-# tracer.py
+import json
 import os
 from pathlib import Path
 
@@ -52,3 +52,49 @@ def clear_traces() -> int:
     elif TRACE_FILE.exists():
         TRACE_FILE.write_text("")
     return count
+
+
+def _trace_id(span: dict) -> str | None:
+    return (span.get("context") or {}).get("trace_id") or span.get("trace_id")
+
+
+def _reopen_trace_file() -> None:
+    global _trace_fh
+    if _trace_fh is not None:
+        _trace_fh.close()
+    TRACE_DIR.mkdir(exist_ok=True)
+    _trace_fh = open(TRACE_FILE, "a", encoding="utf-8")
+
+
+def delete_trace(trace_id: str) -> bool:
+    """Remove all spans for one trace. Returns True if any spans were removed."""
+    if not trace_id or not TRACE_FILE.exists():
+        return False
+
+    kept: list[str] = []
+    removed = False
+    with open(TRACE_FILE, encoding="utf-8") as fh:
+        for line in fh:
+            raw = line.rstrip("\n")
+            if not raw.strip():
+                continue
+            try:
+                span = json.loads(raw)
+            except json.JSONDecodeError:
+                kept.append(raw)
+                continue
+            if _trace_id(span) == trace_id:
+                removed = True
+                continue
+            kept.append(raw)
+
+    if not removed:
+        return False
+
+    global _trace_fh
+    if _trace_fh is not None:
+        _trace_fh.close()
+        _trace_fh = None
+    TRACE_FILE.write_text("\n".join(kept) + ("\n" if kept else ""))
+    _reopen_trace_file()
+    return True
